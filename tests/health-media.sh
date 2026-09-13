@@ -30,7 +30,7 @@ done
 printf '%s|%s|%s|%s|%s\n' "$url" "$location" "$max_redirs" "$proto" "$proto_redir" > "${ZF_CURL_ARGS:?}"
 case "${ZF_CURL_MODE:-pass}" in
     pass)
-        dd if=/dev/zero of="$out" bs=500001 count=1 status=none
+        dd if=/dev/zero of="$out" bs=1000001 count=1 status=none
         printf '206|409600'
         ;;
     stale) printf '410|0' ;;
@@ -47,24 +47,32 @@ export ZF_CURL_ARGS="$TEST_DIR/curl-args"
 source "$PROJECT_DIR/lib/health.sh"
 
 speed_spec="${ZF_HEALTH_MEDIA[2]}"
-[[ "$speed_spec" == 'https://discord.com/api/download?platform=linux&format=tar.gz|500000||200' ]]
+[[ "$speed_spec" == 'https://discord.com/api/download?platform=linux&format=tar.gz|1000000||200' ]]
 
-output=$(ZF_CURL_MODE=pass zf_check_media "$speed_spec")
+output=$(ZF_CURL_MODE=pass zf_check_media "$speed_spec" "$TEST_DIR/result")
 [[ "$output" == *'тест скорости пройден'* ]]
+IFS=$'\t' read -r category target status reason http_code bytes speed_kbps < "$TEST_DIR/result"
+[[ "$category" == speed && "$status" == PASS && "$reason" == speed_threshold_met ]]
+[[ "$http_code" == 206 && "$bytes" == 1000001 && "$speed_kbps" == 400 ]]
 IFS='|' read -r url location max_redirs proto proto_redir < "$ZF_CURL_ARGS"
 [[ "$url" == 'https://discord.com/api/download?platform=linux&format=tar.gz' ]]
 [[ "$location" == 1 && "$max_redirs" == 3 && "$proto" == '=https' && "$proto_redir" == '=https' ]]
 
 set +e
-output=$(ZF_CURL_MODE=stale zf_check_media "$speed_spec"); rc=$?
+output=$(ZF_CURL_MODE=stale zf_check_media "$speed_spec" "$TEST_DIR/result"); rc=$?
 set -e
 (( rc == 2 ))
-[[ "$output" == *'SKIP'* && "$output" == *'HTTP 410'* ]]
+[[ "$output" == *'NOT CHECKED'* && "$output" == *'HTTP 410'* ]]
+IFS=$'\t' read -r category target status reason http_code bytes speed_kbps < "$TEST_DIR/result"
+[[ "$category" == speed && "$status" == NOT_CHECKED && "$reason" == stale_target && "$http_code" == 410 ]]
+[[ "$target" == 'https://discord.com/api/download?platform=linux&format=tar.gz' ]]
 
 set +e
-output=$(ZF_CURL_MODE=fail zf_check_media "$speed_spec"); rc=$?
+output=$(ZF_CURL_MODE=fail zf_check_media "$speed_spec" "$TEST_DIR/result"); rc=$?
 set -e
 (( rc == 1 ))
 [[ "$output" == *'FAIL'* && "$output" == *'HTTP 503'* ]]
+IFS=$'\t' read -r category target status reason http_code bytes speed_kbps < "$TEST_DIR/result"
+[[ "$category" == speed && "$status" == FAIL && "$reason" == http_status && "$http_code" == 503 ]]
 
-printf 'PASS: Discord media target follows bounded HTTPS redirects and preserves PASS/FAIL/SKIP semantics\n'
+printf 'PASS: Discord media target follows bounded HTTPS redirects and preserves PASS/FAIL/NOT_CHECKED semantics\n'

@@ -40,7 +40,11 @@ _sonar_completion() {
             # shellcheck disable=SC2207
             COMPREPLY=( $(compgen -W "--force --version" -- "$cur") )
             return 0 ;;
-        status|check|validate|snapshots)
+        check)
+            # shellcheck disable=SC2207
+            COMPREPLY=( $(compgen -W "--json --json-v2" -- "$cur") )
+            return 0 ;;
+        status|validate|snapshots)
             # shellcheck disable=SC2207
             COMPREPLY=( $(compgen -W "--json" -- "$cur") )
             return 0 ;;

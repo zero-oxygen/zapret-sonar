@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "command", "ok", "summary", "scope", "checks"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "command": { "const": "check" },
+    "ok": { "type": "boolean" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failed", "not_checked"],
+      "properties": {
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "not_checked": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "scope": {
+      "type": "array",
+      "const": ["http", "content", "speed"]
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["category", "target", "status", "reason", "http_code", "bytes", "speed_kbps"],
+        "properties": {
+          "category": { "enum": ["http", "content", "speed"] },
+          "target": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["PASS", "FAIL", "NOT_CHECKED"] },
+          "reason": {
+            "enum": [
+              "http_response",
+              "connection_failed",
+              "http_status",
+              "stale_target",
+              "response_too_small",
+              "below_speed_threshold",
+              "signature_unavailable",
+              "signature_mismatch",
+              "signature_match",
+              "speed_threshold_met"
+            ]
+          },
+          "http_code": { "type": ["integer", "null"], "minimum": 100, "maximum": 599 },
+          "bytes": { "type": ["integer", "null"], "minimum": 0 },
+          "speed_kbps": { "type": ["integer", "null"], "minimum": 0 }
+        }
+      }
+    }
+  }
+}

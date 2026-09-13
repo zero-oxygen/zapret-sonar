@@ -32,4 +32,30 @@ check=$(cmd_check --json); rc=$?
 set -e
 (( rc == 1 ))
 jq -e '.schema_version == 1 and .command == "check" and (.ok | not) and .passed == 5 and .failed == 1 and .skipped == 1 and .scope == "http-content"' <<< "$check" >/dev/null
-printf 'PASS: status and check JSON contracts are versioned and valid\n'
+
+# shellcheck disable=SC2034
+zf_health_check() {
+    ZF_HEALTH_PASSED=1
+    ZF_HEALTH_FAILED=1
+    ZF_HEALTH_NOT_CHECKED=1
+    ZF_HEALTH_RESULTS=(
+        $'http\thttps://example.test/api\tPASS\thttp_response\t204\t\t'
+        $'content\thttps://example.test/image.png\tNOT_CHECKED\tstale_target\t410\t\t'
+        $'speed\thttps://example.test/file.tar.gz\tFAIL\tbelow_speed_threshold\t206\t500001\t120'
+    )
+    return 1
+}
+set +e
+check_v2=$(cmd_check --json-v2); rc=$?
+set -e
+(( rc == 1 ))
+jq -e '
+    .schema_version == 2 and .command == "check" and (.ok | not) and
+    .summary == {"passed":1,"failed":1,"not_checked":1} and
+    .scope == ["http","content","speed"] and
+    (.checks | length) == 3 and
+    .checks[0].status == "PASS" and .checks[0].http_code == 204 and
+    .checks[1].status == "NOT_CHECKED" and .checks[1].bytes == null and
+    .checks[2].category == "speed" and .checks[2].speed_kbps == 120
+' <<< "$check_v2" >/dev/null
+printf 'PASS: status and check JSON v1/v2 contracts are versioned and valid\n'

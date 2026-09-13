@@ -82,7 +82,7 @@ Installation, reinstallation, service management, and uninstall are tested on Ub
 
 | Command | Purpose |
 |---|---|
-| `sonar check [--json]` | Check HTTP/CDN targets; output tracks `passed`, `failed`, and `skipped` |
+| `sonar check [--json\|--json-v2]` | Check HTTP/CDN targets; JSON v1 preserves aggregates, while v2 adds categories and individual results |
 | `sonar doctor` | Check the service, config, nfqws, and active strategy; `sudo sonar doctor` also verifies firewall interception |
 | `sonar status [--json]` | Show state, modes, and versions; JSON excludes preflight checks |
 | `sonar validate [--json]` | Validate every strategy through translation and `nfqws --dry-run` without applying it |
@@ -90,7 +90,7 @@ Installation, reinstallation, service management, and uninstall are tested on Ub
 | `sonar log [-f] [period]` | Show the systemd journal |
 | `sonar --debug <command>` | Enable shell tracing and verbose curl output |
 
-`PASS` means that a specific check succeeded, `FAIL` means it failed, and `SKIP` means that the target could not produce a meaningful result. Skipped checks are not counted as passed but do not fail the command by themselves; a non-zero exit code is returned when any check reports `FAIL`.
+`PASS` means that a specific check succeeded, `FAIL` means it failed, and `NOT CHECKED` means that the probe could not produce a meaningful result. An unchecked target is not counted as passed but does not fail the command by itself; a non-zero exit code is returned when any check reports `FAIL`. `--json` keeps the compatible v1 schema with its `skipped` field, while `--json-v2` returns `not_checked` and individual `http`, `content`, and `speed` results. UDP and QUIC are not in scope yet.
 
 The process exit status matches the command result: `0` means success and a non-zero status means a failed check or operation. JSON commands preserve this contract and are safe to use in monitoring and automation.
 

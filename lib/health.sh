@@ -30,6 +30,8 @@ fi
 ZF_HEALTH_PASSED=0
 ZF_HEALTH_FAILED=0
 ZF_HEALTH_SKIPPED=0
+ZF_HEALTH_NOT_CHECKED=0
+ZF_HEALTH_RESULTS=()
 
 # Цели HTTP-проверки: "URL"
 # Проверяем все ключевые точки: web, api, gateway для Discord и google/youtube
@@ -72,7 +74,7 @@ ZF_BASELINE_WORKING=()
 ZF_HEALTH_MEDIA=(
     "https://yt3.ggpht.com/a/default-user=s88-c-k-c0x00ffffff-no-rj|1000|ffd8ff|0"
     "https://cdn.discordapp.com/embed/avatars/0.png|500|89504e47|0"
-    "https://discord.com/api/download?platform=linux&format=tar.gz|500000||200"
+    "https://discord.com/api/download?platform=linux&format=tar.gz|1000000||200"
 )
 
 # --- Хекс первых N байт файла ------------------------------------------------
@@ -103,25 +105,37 @@ _zf_code_ok() {
 # zf_check_host URL → 0 = доступен. Печатает строку отчёта.
 # Ожидаются только валидные коды: 404 для gateway.discord.gg это норма (эндпоинт отвечает),
 # для остальных — 200|204|301|302|303|307|308.
+_zf_health_write_result() {
+    local file="$1" category="$2" target="$3" status="$4" reason="$5"
+    local http_code="${6:-}" bytes="${7:-}" speed_kbps="${8:-}"
+    [[ -n "$file" ]] || return 0
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$category" "$target" "$status" "$reason" "$http_code" "$bytes" "$speed_kbps" > "$file"
+}
+
 zf_check_host() {
-    local url="$1" code
+    local url="$1" result_file="${2:-}" code
     code=$(LC_ALL=C curl -o /dev/null -s -m "$ZF_HEALTH_TIMEOUT" -w '%{http_code}' "$url" 2>/dev/null) || code="000"
     if _zf_code_ok "$url" "$code"; then
         printf '  %sOK%s    %-42s HTTP %s\n' "$_ZF_C_OK" "$_ZF_C_OFF" "$url" "$code"
+        _zf_health_write_result "$result_file" http "$url" PASS http_response "$code"
         return 0
     fi
     if [[ "$code" == "000" ]]; then
         printf '  %sFAIL%s  %-42s нет соединения (таймаут/обрыв)\n' "$_ZF_C_BAD" "$_ZF_C_OFF" "$url"
+        _zf_health_write_result "$result_file" http "$url" FAIL connection_failed
     else
         printf '  %sFAIL%s  %-42s HTTP %s\n' "$_ZF_C_BAD" "$_ZF_C_OFF" "$url" "$code"
+        _zf_health_write_result "$result_file" http "$url" FAIL http_status "$code"
     fi
     return 1
 }
 
 # --- Медиа-проверка и замер скорости ------------------------------------------
-# zf_check_media возвращает 0=PASS, 1=FAIL, 2=SKIP.
+# zf_check_media возвращает 0=PASS, 1=FAIL, 2=NOT_CHECKED.
 zf_check_media() {
     local spec="$1"
+    local result_file="${2:-}"
     local url="${spec%%|*}" rest="${spec#*|}"
     local min_bytes="${rest%%|*}" rest2="${rest#*|}"
     local magic="${rest2%%|*}" min_speed_kb="${rest2#*|}"
@@ -145,12 +159,16 @@ zf_check_media() {
     # 404/410 на медиа-цели — не сбой обхода, а устаревший URL (версия снята с CDN).
     # 451 означает блокировку по юридическим причинам и считается ошибкой.
     if [[ "$http_code" =~ ^(404|410)$ ]]; then
-        printf '  %sSKIP%s  %-42s HTTP %s — цель устарела\n' "$_ZF_C_DIM" "$_ZF_C_OFF" "$url" "$http_code"
+        printf '  %sNOT CHECKED%s  %-42s HTTP %s — цель устарела\n' "$_ZF_C_DIM" "$_ZF_C_OFF" "$url" "$http_code"
+        _zf_health_write_result "$result_file" "$([[ $min_speed_kb -gt 0 ]] && printf speed || printf content)" \
+            "$url" NOT_CHECKED stale_target "$http_code"
         rm -f "$tmp"
         return 2
     fi
     if ! [[ "$http_code" =~ ^(200|206)$ ]]; then
         printf '  %sFAIL%s  %-42s HTTP %s (нет соединения)\n' "$_ZF_C_BAD" "$_ZF_C_OFF" "$url" "$http_code"
+        _zf_health_write_result "$result_file" "$([[ $min_speed_kb -gt 0 ]] && printf speed || printf content)" \
+            "$url" FAIL http_status "$http_code"
         rm -f "$tmp"
         return 1
     fi
@@ -158,6 +176,8 @@ zf_check_media() {
     size=$(stat -c%s "$tmp" 2>/dev/null || echo 0)
     if (( size < min_bytes )); then
         printf '  %sFAIL%s  %-42s %s байт (ждали ≥%s) — обрыв\n' "$_ZF_C_BAD" "$_ZF_C_OFF" "$url" "$size" "$min_bytes"
+        _zf_health_write_result "$result_file" "$([[ $min_speed_kb -gt 0 ]] && printf speed || printf content)" \
+            "$url" FAIL response_too_small "$http_code" "$size" "$speed_kb"
         rm -f "$tmp"
         return 1
     fi
@@ -165,6 +185,8 @@ zf_check_media() {
     if (( min_speed_kb > 0 && speed_kb < min_speed_kb )); then
         printf '  %sFAIL%s  %-42s скорость %s КБ/с (минимум %s КБ/с) — throttling\n' \
             "$_ZF_C_BAD" "$_ZF_C_OFF" "$url" "$speed_kb" "$min_speed_kb"
+        _zf_health_write_result "$result_file" speed "$url" FAIL below_speed_threshold \
+            "$http_code" "$size" "$speed_kb"
         rm -f "$tmp"
         return 1
     fi
@@ -173,12 +195,16 @@ zf_check_media() {
         actual=$(_zf_head_hex "$tmp" "$(( ${#magic} / 2 ))")
         if [[ -z "$actual" ]]; then
             printf '  %sWARN%s  %-42s %s байт, сигнатуру проверить нечем\n' "$_ZF_C_WARN" "$_ZF_C_OFF" "$url" "$size"
+            _zf_health_write_result "$result_file" content "$url" NOT_CHECKED signature_unavailable \
+                "$http_code" "$size" "$speed_kb"
             rm -f "$tmp"
-            return 0
+            return 2
         fi
         if [[ "${actual,,}" != "${magic,,}" ]]; then
             printf '  %sFAIL%s  %-42s %s байт, сигнатура %s ≠ %s — подмена\n' \
                 "$_ZF_C_BAD" "$_ZF_C_OFF" "$url" "$size" "$actual" "$magic"
+            _zf_health_write_result "$result_file" content "$url" FAIL signature_mismatch \
+                "$http_code" "$size" "$speed_kb"
             rm -f "$tmp"
             return 1
         fi
@@ -186,8 +212,12 @@ zf_check_media() {
 
     if (( min_speed_kb > 0 )); then
         printf '  %sOK%s    %-42s %s байт (%s КБ/с, тест скорости пройден)\n' "$_ZF_C_OK" "$_ZF_C_OFF" "$url" "$size" "$speed_kb"
+        _zf_health_write_result "$result_file" speed "$url" PASS speed_threshold_met \
+            "$http_code" "$size" "$speed_kb"
     else
         printf '  %sOK%s    %-42s %s байт, сигнатура совпала\n' "$_ZF_C_OK" "$_ZF_C_OFF" "$url" "$size"
+        _zf_health_write_result "$result_file" content "$url" PASS signature_match \
+            "$http_code" "$size" "$speed_kb"
     fi
     rm -f "$tmp"
     return $rc
@@ -198,6 +228,11 @@ zf_check_media() {
 # HTTP- и медиа-проверки запускаются параллельно для скорости.
 zf_health_check() {
     local failed=0 skipped=0 total=0 url spec rc
+    ZF_HEALTH_PASSED=0
+    ZF_HEALTH_FAILED=0
+    ZF_HEALTH_SKIPPED=0
+    ZF_HEALTH_NOT_CHECKED=0
+    ZF_HEALTH_RESULTS=()
     local tmp_dir; tmp_dir=$(mktemp -d) || return 1
     # shellcheck disable=SC2064
     trap "rm -rf '$tmp_dir'" RETURN
@@ -205,14 +240,14 @@ zf_health_check() {
     local i=0
     for url in "${ZF_HEALTH_HOSTS[@]}"; do
         total=$((total + 1))
-        ( zf_check_host "$url" > "$tmp_dir/http_$i.out" 2>&1; echo $? > "$tmp_dir/http_$i.rc" ) &
+        ( zf_check_host "$url" "$tmp_dir/http_$i.result" > "$tmp_dir/http_$i.out" 2>&1; echo $? > "$tmp_dir/http_$i.rc" ) &
         i=$((i + 1))
     done
 
     local j=0
     for spec in "${ZF_HEALTH_MEDIA[@]}"; do
         total=$((total + 1))
-        ( zf_check_media "$spec" > "$tmp_dir/media_$j.out" 2>&1; echo $? > "$tmp_dir/media_$j.rc" ) &
+        ( zf_check_media "$spec" "$tmp_dir/media_$j.result" > "$tmp_dir/media_$j.out" 2>&1; echo $? > "$tmp_dir/media_$j.rc" ) &
         j=$((j + 1))
     done
 
@@ -222,21 +257,30 @@ zf_health_check() {
     i=0
     for url in "${ZF_HEALTH_HOSTS[@]}"; do
         cat "$tmp_dir/http_$i.out" 2>/dev/null
+        [[ -f "$tmp_dir/http_$i.result" ]] && ZF_HEALTH_RESULTS+=("$(cat "$tmp_dir/http_$i.result")")
         [[ "$(cat "$tmp_dir/http_$i.rc" 2>/dev/null)" != "0" ]] && failed=$((failed + 1))
         i=$((i + 1))
     done
 
-    printf 'Целостность контента:\n'
-    j=0
-    for spec in "${ZF_HEALTH_MEDIA[@]}"; do
-        cat "$tmp_dir/media_$j.out" 2>/dev/null
-        rc=$(cat "$tmp_dir/media_$j.rc" 2>/dev/null)
-        case "$rc" in
-            0) ;;
-            2) skipped=$((skipped + 1)) ;;
-            *) failed=$((failed + 1)) ;;
-        esac
-        j=$((j + 1))
+    local media_category spec_speed
+    for media_category in content speed; do
+        [[ "$media_category" == content ]] && printf 'Целостность контента:\n' || printf 'Скорость загрузки:\n'
+        j=0
+        for spec in "${ZF_HEALTH_MEDIA[@]}"; do
+            spec_speed=${spec##*|}
+            if { [[ "$media_category" == content ]] && (( spec_speed == 0 )); } \
+                || { [[ "$media_category" == speed ]] && (( spec_speed > 0 )); }; then
+                cat "$tmp_dir/media_$j.out" 2>/dev/null
+                [[ -f "$tmp_dir/media_$j.result" ]] && ZF_HEALTH_RESULTS+=("$(cat "$tmp_dir/media_$j.result")")
+                rc=$(cat "$tmp_dir/media_$j.rc" 2>/dev/null)
+                case "$rc" in
+                    0) ;;
+                    2) skipped=$((skipped + 1)) ;;
+                    *) failed=$((failed + 1)) ;;
+                esac
+            fi
+            j=$((j + 1))
+        done
     done
 
     rm -rf "$tmp_dir"
@@ -245,11 +289,13 @@ zf_health_check() {
     ZF_HEALTH_FAILED=$failed
     # shellcheck disable=SC2034
     ZF_HEALTH_SKIPPED=$skipped
+    # shellcheck disable=SC2034
+    ZF_HEALTH_NOT_CHECKED=$skipped
     if (( failed == 0 )); then
-        printf '\n%sИтог: %d пройдено, %d пропущено, %d ошибок%s\n' \
+        printf '\n%sИтог: %d пройдено, %d не проверено, %d ошибок%s\n' \
             "$_ZF_C_OK" "$ZF_HEALTH_PASSED" "$skipped" "$failed" "$_ZF_C_OFF"
     else
-        printf '\n%sИтог: %d пройдено, %d пропущено, %d ошибок%s\n' \
+        printf '\n%sИтог: %d пройдено, %d не проверено, %d ошибок%s\n' \
             "$_ZF_C_BAD" "$ZF_HEALTH_PASSED" "$skipped" "$failed" "$_ZF_C_OFF"
     fi
     (( failed == 0 ))

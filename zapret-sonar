@@ -688,13 +688,41 @@ cmd_status() {
 }
 
 cmd_check() {
-    if [[ "${1:-}" == "--json" ]]; then
+    local format="text"
+    case "${1:-}" in
+        "") ;;
+        --json) format=v1 ;;
+        --json-v2) format=v2 ;;
+        *) die "check: неизвестный ключ $1" ;;
+    esac
+    (( $# <= 1 )) || die "check: лишние аргументы"
+    if [[ "$format" != text ]]; then
         ZF_MACHINE_OUTPUT=1
         local rc
         zf_health_check >/dev/null; rc=$?
-        printf '{"schema_version":1,"command":"check","ok":%s,"passed":%d,"failed":%d,"skipped":%d,"scope":"http-content"}\n' \
-            "$([[ $rc -eq 0 ]] && printf true || printf false)" \
-            "$ZF_HEALTH_PASSED" "$ZF_HEALTH_FAILED" "$ZF_HEALTH_SKIPPED"
+        if [[ "$format" == v1 ]]; then
+            printf '{"schema_version":1,"command":"check","ok":%s,"passed":%d,"failed":%d,"skipped":%d,"scope":"http-content"}\n' \
+                "$([[ $rc -eq 0 ]] && printf true || printf false)" \
+                "$ZF_HEALTH_PASSED" "$ZF_HEALTH_FAILED" "$ZF_HEALTH_SKIPPED"
+        else
+            local first=1 result category target status reason http_code bytes speed_kbps
+            printf '{"schema_version":2,"command":"check","ok":%s,"summary":{"passed":%d,"failed":%d,"not_checked":%d},"scope":["http","content","speed"],"checks":[' \
+                "$([[ $rc -eq 0 ]] && printf true || printf false)" \
+                "$ZF_HEALTH_PASSED" "$ZF_HEALTH_FAILED" "$ZF_HEALTH_NOT_CHECKED"
+            for result in "${ZF_HEALTH_RESULTS[@]}"; do
+                IFS=$'\t' read -r category target status reason http_code bytes speed_kbps <<< "$result"
+                [[ "$http_code" =~ ^[0-9]+$ ]] || http_code=""
+                [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=""
+                [[ "$speed_kbps" =~ ^[0-9]+$ ]] || speed_kbps=""
+                (( first )) || printf ','
+                first=0
+                printf '{"category":"%s","target":"%s","status":"%s","reason":"%s","http_code":%s,"bytes":%s,"speed_kbps":%s}' \
+                    "$(_zf_json_escape "$category")" "$(_zf_json_escape "$target")" \
+                    "$(_zf_json_escape "$status")" "$(_zf_json_escape "$reason")" \
+                    "${http_code:-null}" "${bytes:-null}" "${speed_kbps:-null}"
+            done
+            printf ']}\n'
+        fi
         return "$rc"
     fi
     zf_health_check
@@ -2030,7 +2058,7 @@ cmd_help() {
         list)      printf 'Список стратегий Flowseal (* — применённая).\n' ;;
         use)       printf 'Применить стратегию. Можно частью имени: sonar use alt12\n' ;;
         status)    printf 'Состояние сервиса, стратегии, версии zapret/Flowseal, окружение.\n' ;;
-        check)     printf 'Проверить доступность заданных HTTP/CDN-целей. Не проверяет UDP/QUIC.\n' ;;
+        check)     printf 'Проверить доступность заданных HTTP/CDN-целей. Не проверяет UDP/QUIC.\n  --json — совместимый агрегированный JSON v1\n  --json-v2 — категории и результаты отдельных проверок\n' ;;
         validate)  printf 'Проверить все установленные стратегии без изменения конфига или сервиса.\n  --json — машинно-читаемый результат\n' ;;
         export-diagnostic) printf 'Сформировать безопасный JSON для отчёта об ошибке.\n  --output <файл> — записать атомарно с правами 0600\n' ;;
         snapshots) printf 'Показать доступные snapshots Flowseal.\n  --json — машинно-читаемый результат\n' ;;
@@ -2058,7 +2086,7 @@ zapret-sonar — стратегии Flowseal поверх zapret v1
   list                  список стратегий (* — применённая)
   use <стратегия>       применить (можно частью имени: use alt12)
   status                состояние сервиса, стратегии, версии, окружения
-  check                 доступность заданных HTTP/CDN-целей
+  check [--json|--json-v2] доступность заданных HTTP/CDN-целей
   validate [--json]     проверить все стратегии без применения
   export-diagnostic     безопасный JSON для отчёта об ошибке
   snapshots [--json]    доступные snapshots Flowseal
