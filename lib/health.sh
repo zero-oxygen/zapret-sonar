@@ -68,11 +68,11 @@ ZF_BASELINE_WORKING=()
 # Цели медиа-проверки: "URL|min_bytes|magic_hex|min_speed_kb"
 # 1. Аватарка Google / YT (проверка целостности и сигнатуры JPEG)
 # 2. Аватарка Discord CDN (проверка целостности и сигнатуры PNG)
-# 3. Реальный бинарный блок Discord CDN (512 КБ с замером скорости для отсечения throttling)
+# 3. Текущий stable Discord tarball (бинарный блок с замером скорости для отсечения throttling)
 ZF_HEALTH_MEDIA=(
     "https://yt3.ggpht.com/a/default-user=s88-c-k-c0x00ffffff-no-rj|1000|ffd8ff|0"
     "https://cdn.discordapp.com/embed/avatars/0.png|500|89504e47|0"
-    "https://dl.discordapp.net/apps/linux/0.0.60/discord-0.0.60.tar.gz|200000||200"
+    "https://discord.com/api/download?platform=linux&format=tar.gz|500000||200"
 )
 
 # --- Хекс первых N байт файла ------------------------------------------------
@@ -135,7 +135,9 @@ zf_check_media() {
     (( min_speed_kb > 0 )) && range_opt=(-r "0-$((min_bytes * 2))")
 
     local curl_out
-    curl_out=$(LC_ALL=C curl -s -m "$ZF_HEALTH_TIMEOUT" "${range_opt[@]}" -w '%{http_code}|%{speed_download}' -o "$tmp" "$url" 2>/dev/null) || curl_out="000|0"
+    curl_out=$(LC_ALL=C curl -s -L --max-redirs 3 --proto '=https' --proto-redir '=https' \
+        -m "$ZF_HEALTH_TIMEOUT" "${range_opt[@]}" -w '%{http_code}|%{speed_download}' \
+        -o "$tmp" "$url" 2>/dev/null) || curl_out="000|0"
     local http_code="${curl_out%%|*}"
     speed_bps="${curl_out##*|}"
     speed_kb=$(( ${speed_bps%%[.,]*} / 1024 ))

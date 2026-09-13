@@ -90,7 +90,7 @@ Installation, reinstallation, service management, and uninstall are tested on Ub
 | `sonar log [-f] [period]` | Show the systemd journal |
 | `sonar --debug <command>` | Enable shell tracing and verbose curl output |
 
-`PASS` means that a specific check succeeded, `FAIL` means it failed, and `SKIP` means that the target could not produce a meaningful result. Skipped checks are not counted as passed.
+`PASS` means that a specific check succeeded, `FAIL` means it failed, and `SKIP` means that the target could not produce a meaningful result. Skipped checks are not counted as passed but do not fail the command by themselves; a non-zero exit code is returned when any check reports `FAIL`.
 
 The process exit status matches the command result: `0` means success and a non-zero status means a failed check or operation. JSON commands preserve this contract and are safe to use in monitoring and automation.
 
