@@ -128,6 +128,21 @@ _zf_health_write_result() {
         "$http_version" "$curl_exit_code" "$control_status" "$control_target" > "$file"
 }
 
+_zf_health_collect_result() {
+    local file="$1" expected_category="$2" expected_target="$3" expected_status="$4"
+    local line category target status reason rest
+    line=$(cat "$file" 2>/dev/null || true)
+    IFS=$'\t' read -r category target status reason rest <<< "$line"
+    if [[ -n "$line" && "$category" == "$expected_category" && "$target" == "$expected_target" \
+        && "$status" == "$expected_status" && -n "$reason" && "$line" != *$'\n'* ]]; then
+        ZF_HEALTH_RESULT="$line"
+        return 0
+    fi
+    ZF_HEALTH_RESULT=$(printf '%s\t%s\tFAIL\tprobe_execution_failed\t-\t-\t-\t-\t-\t-\t-' \
+        "$expected_category" "$expected_target")
+    return 1
+}
+
 zf_check_host() {
     local url="$1" result_file="${2:-}" code
     code=$(LC_ALL=C curl -o /dev/null -s -m "$ZF_HEALTH_TIMEOUT" -w '%{http_code}' "$url" 2>/dev/null) || code="000"
@@ -320,9 +335,9 @@ zf_check_quic() {
 
 # --- Полная проверка ---------------------------------------------------------
 # zf_health_check → 0 если всё прошло. Печатает отчёт.
-# HTTP- и медиа-проверки запускаются параллельно для скорости.
+# HTTP, media и QUIC-проверки запускаются параллельно для скорости.
 zf_health_check() {
-    local failed=0 skipped=0 total=0 url spec rc
+    local failed=0 skipped=0 total=0 url spec rc expected_status result_status
     ZF_HEALTH_PASSED=0
     ZF_HEALTH_FAILED=0
     ZF_HEALTH_SKIPPED=0
@@ -357,8 +372,14 @@ zf_health_check() {
     i=0
     for url in "${ZF_HEALTH_HOSTS[@]}"; do
         cat "$tmp_dir/http_$i.out" 2>/dev/null
-        [[ -f "$tmp_dir/http_$i.result" ]] && ZF_HEALTH_RESULTS+=("$(cat "$tmp_dir/http_$i.result")")
-        [[ "$(cat "$tmp_dir/http_$i.rc" 2>/dev/null)" != "0" ]] && failed=$((failed + 1))
+        rc=$(cat "$tmp_dir/http_$i.rc" 2>/dev/null || true)
+        [[ "$rc" == 0 ]] && expected_status=PASS || expected_status=FAIL
+        if ! _zf_health_collect_result "$tmp_dir/http_$i.result" http "$url" "$expected_status"; then
+            printf '  %sFAIL%s  %-42s внутренняя ошибка проверки\n' "$_ZF_C_BAD" "$_ZF_C_OFF" "$url"
+        fi
+        ZF_HEALTH_RESULTS+=("$ZF_HEALTH_RESULT")
+        IFS=$'\t' read -r _ _ result_status _ <<< "$ZF_HEALTH_RESULT"
+        [[ "$result_status" == PASS ]] || failed=$((failed + 1))
         i=$((i + 1))
     done
 
@@ -371,11 +392,22 @@ zf_health_check() {
             if { [[ "$media_category" == content ]] && (( spec_speed == 0 )); } \
                 || { [[ "$media_category" == speed ]] && (( spec_speed > 0 )); }; then
                 cat "$tmp_dir/media_$j.out" 2>/dev/null
-                [[ -f "$tmp_dir/media_$j.result" ]] && ZF_HEALTH_RESULTS+=("$(cat "$tmp_dir/media_$j.result")")
-                rc=$(cat "$tmp_dir/media_$j.rc" 2>/dev/null)
+                rc=$(cat "$tmp_dir/media_$j.rc" 2>/dev/null || true)
                 case "$rc" in
-                    0) ;;
-                    2) skipped=$((skipped + 1)) ;;
+                    0) expected_status=PASS ;;
+                    2) expected_status=NOT_CHECKED ;;
+                    *) expected_status=FAIL ;;
+                esac
+                if ! _zf_health_collect_result "$tmp_dir/media_$j.result" "$media_category" \
+                    "${spec%%|*}" "$expected_status"; then
+                    printf '  %sFAIL%s  %-42s внутренняя ошибка проверки\n' \
+                        "$_ZF_C_BAD" "$_ZF_C_OFF" "${spec%%|*}"
+                fi
+                ZF_HEALTH_RESULTS+=("$ZF_HEALTH_RESULT")
+                IFS=$'\t' read -r _ _ result_status _ <<< "$ZF_HEALTH_RESULT"
+                case "$result_status" in
+                    PASS) ;;
+                    NOT_CHECKED) skipped=$((skipped + 1)) ;;
                     *) failed=$((failed + 1)) ;;
                 esac
             fi
@@ -386,11 +418,22 @@ zf_health_check() {
     if [[ "$ZF_HEALTH_INCLUDE_QUIC" == 1 ]]; then
         printf 'HTTP/3 (QUIC):\n'
         cat "$tmp_dir/quic.out" 2>/dev/null
-        [[ -f "$tmp_dir/quic.result" ]] && ZF_HEALTH_RESULTS+=("$(cat "$tmp_dir/quic.result")")
-        rc=$(cat "$tmp_dir/quic.rc" 2>/dev/null)
+        rc=$(cat "$tmp_dir/quic.rc" 2>/dev/null || true)
         case "$rc" in
-            0) ;;
-            2) skipped=$((skipped + 1)) ;;
+            0) expected_status=PASS ;;
+            2) expected_status=NOT_CHECKED ;;
+            *) expected_status=FAIL ;;
+        esac
+        if ! _zf_health_collect_result "$tmp_dir/quic.result" quic \
+            "$ZF_HEALTH_QUIC_TARGET" "$expected_status"; then
+            printf '  %sFAIL%s  %-42s внутренняя ошибка проверки\n' \
+                "$_ZF_C_BAD" "$_ZF_C_OFF" "$ZF_HEALTH_QUIC_TARGET"
+        fi
+        ZF_HEALTH_RESULTS+=("$ZF_HEALTH_RESULT")
+        IFS=$'\t' read -r _ _ result_status _ <<< "$ZF_HEALTH_RESULT"
+        case "$result_status" in
+            PASS) ;;
+            NOT_CHECKED) skipped=$((skipped + 1)) ;;
             *) failed=$((failed + 1)) ;;
         esac
     fi
@@ -404,10 +447,10 @@ zf_health_check() {
     # shellcheck disable=SC2034
     ZF_HEALTH_NOT_CHECKED=$skipped
     if (( failed == 0 )); then
-        printf '\n%sИтог: %d пройдено, %d не проверено, %d ошибок%s\n' \
+        printf '\n%sИтог: пройдено: %d, не проверено: %d, ошибок: %d%s\n' \
             "$_ZF_C_OK" "$ZF_HEALTH_PASSED" "$skipped" "$failed" "$_ZF_C_OFF"
     else
-        printf '\n%sИтог: %d пройдено, %d не проверено, %d ошибок%s\n' \
+        printf '\n%sИтог: пройдено: %d, не проверено: %d, ошибок: %d%s\n' \
             "$_ZF_C_BAD" "$ZF_HEALTH_PASSED" "$skipped" "$failed" "$_ZF_C_OFF"
     fi
     (( failed == 0 ))

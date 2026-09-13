@@ -46,7 +46,8 @@
               "http3_response",
               "http3_unsupported",
               "target_http3_failed",
-              "control_http3_failed"
+              "control_http3_failed",
+              "probe_execution_failed"
             ]
           },
           "http_code": { "type": ["integer", "null"], "minimum": 100, "maximum": 599 },

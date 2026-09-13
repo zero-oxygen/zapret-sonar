@@ -37,15 +37,15 @@ curl() {
     while (( $# )); do
         if [[ "$1" == -o ]]; then out="$2"; shift 2; else shift; fi
     done
-    [[ "$out" == *SHA256SUMS ]] && src="$asset_dir/SHA256SUMS" || src="$asset_dir/zapret-sonar-v1.3.4.tar.gz"
+    [[ "$out" == *SHA256SUMS ]] && src="$asset_dir/SHA256SUMS" || src="$asset_dir/zapret-sonar-v1.4.0.tar.gz"
     cp "$src" "$out"
 }
 
-cmd_self_update --force --version 1.3.4 >/dev/null
+cmd_self_update --force --version 1.4.0 >/dev/null
 new_target=$(readlink "$ZF_INSTALL_ROOT/current")
-[[ "$new_target" == releases/1.3.4-* ]]
+[[ "$new_target" == releases/1.4.0-* ]]
 [[ "$(readlink "$ZF_INSTALL_ROOT/previous")" == releases/old ]]
-[[ "$(ZF_LIBRARY_MODE=0 "$ZF_INSTALL_ROOT/zapret-sonar" --version)" == 'zapret-sonar 1.3.4' ]]
-cmd_self_update --force --version 1.3.4 >/dev/null
+[[ "$(ZF_LIBRARY_MODE=0 "$ZF_INSTALL_ROOT/zapret-sonar" --version)" == 'zapret-sonar 1.4.0' ]]
+cmd_self_update --force --version 1.4.0 >/dev/null
 [[ "$(readlink "$ZF_INSTALL_ROOT/current")" == "$new_target" ]]
 printf 'PASS: self-update command downloads, verifies and activates a release\n'

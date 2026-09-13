@@ -181,7 +181,7 @@ If Flowseal is temporarily unavailable, the active tree keeps working. List reta
 
 - YouTube throttling on `googlevideo.com` is not measured reliably.
 - Discord Voice and other UDP scenarios are not tested.
-- QUIC/HTTP3 is not tested.
+- HTTP/3 is tested only for one Discord HTTP target; this does not cover Discord Voice/STUN or arbitrary QUIC scenarios.
 - curl ClientHello differs from browser traffic, including multi-packet TLS.
 - `check` can pass without zapret when targets are already reachable; `try` performs a differential comparison against baseline.
 

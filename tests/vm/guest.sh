@@ -132,7 +132,7 @@ nfqws_pids() {
 assert_layout() {
     [[ -x /opt/zapret/nfq/nfqws ]] || fail 'nfqws is not installed'
     [[ -L /opt/zapret/zapret-sonar/current ]] || fail 'versioned current link is missing'
-    assert_eq releases/1.3.4 "$(readlink /opt/zapret/zapret-sonar/current)" 'unexpected current release target'
+    assert_eq releases/1.4.0 "$(readlink /opt/zapret/zapret-sonar/current)" 'unexpected current release target'
     [[ -f /etc/systemd/system/zapret.service ]] || fail 'systemd unit is missing'
     local link
     for link in zapret-sonar sonar zapret-sonar-tui sonar-tui; do

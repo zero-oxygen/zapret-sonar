@@ -13,7 +13,7 @@
 
 set -uo pipefail
 
-ZF_VERSION="1.3.4"
+ZF_VERSION="1.4.0"
 ZF_SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 if [[ "${1:-}" == --install-root ]]; then
     [[ $# -ge 2 && -d "$2" && ! -L "$2" ]] || { printf 'ошибка: некорректный install root\n' >&2; exit 1; }
