@@ -698,28 +698,38 @@ cmd_check() {
     (( $# <= 1 )) || die "check: лишние аргументы"
     if [[ "$format" != text ]]; then
         ZF_MACHINE_OUTPUT=1
-        local rc
+        local rc include_quic=$ZF_HEALTH_INCLUDE_QUIC
+        [[ "$format" == v1 ]] && ZF_HEALTH_INCLUDE_QUIC=0
         zf_health_check >/dev/null; rc=$?
+        ZF_HEALTH_INCLUDE_QUIC=$include_quic
         if [[ "$format" == v1 ]]; then
             printf '{"schema_version":1,"command":"check","ok":%s,"passed":%d,"failed":%d,"skipped":%d,"scope":"http-content"}\n' \
                 "$([[ $rc -eq 0 ]] && printf true || printf false)" \
                 "$ZF_HEALTH_PASSED" "$ZF_HEALTH_FAILED" "$ZF_HEALTH_SKIPPED"
         else
             local first=1 result category target status reason http_code bytes speed_kbps
-            printf '{"schema_version":2,"command":"check","ok":%s,"summary":{"passed":%d,"failed":%d,"not_checked":%d},"scope":["http","content","speed"],"checks":[' \
+            local http_version curl_exit_code control_status control_target
+            printf '{"schema_version":2,"command":"check","ok":%s,"summary":{"passed":%d,"failed":%d,"not_checked":%d},"scope":["http","content","speed","quic"],"checks":[' \
                 "$([[ $rc -eq 0 ]] && printf true || printf false)" \
                 "$ZF_HEALTH_PASSED" "$ZF_HEALTH_FAILED" "$ZF_HEALTH_NOT_CHECKED"
             for result in "${ZF_HEALTH_RESULTS[@]}"; do
-                IFS=$'\t' read -r category target status reason http_code bytes speed_kbps <<< "$result"
-                [[ "$http_code" =~ ^[0-9]+$ ]] || http_code=""
+                IFS=$'\t' read -r category target status reason http_code bytes speed_kbps \
+                    http_version curl_exit_code control_status control_target <<< "$result"
+                [[ "$http_code" =~ ^[1-5][0-9][0-9]$ ]] || http_code=""
                 [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=""
                 [[ "$speed_kbps" =~ ^[0-9]+$ ]] || speed_kbps=""
+                [[ "$http_version" == 3 ]] || http_version=-
+                [[ "$curl_exit_code" =~ ^[0-9]+$ ]] || curl_exit_code=""
                 (( first )) || printf ','
                 first=0
-                printf '{"category":"%s","target":"%s","status":"%s","reason":"%s","http_code":%s,"bytes":%s,"speed_kbps":%s}' \
+                printf '{"category":"%s","target":"%s","status":"%s","reason":"%s","http_code":%s,"bytes":%s,"speed_kbps":%s,"http_version":%s,"curl_exit_code":%s,"control_status":%s,"control_target":%s}' \
                     "$(_zf_json_escape "$category")" "$(_zf_json_escape "$target")" \
                     "$(_zf_json_escape "$status")" "$(_zf_json_escape "$reason")" \
-                    "${http_code:-null}" "${bytes:-null}" "${speed_kbps:-null}"
+                    "${http_code:-null}" "${bytes:-null}" "${speed_kbps:-null}" \
+                    "$([[ "$http_version" == - ]] && printf null || printf '"%s"' "$(_zf_json_escape "$http_version")")" \
+                    "${curl_exit_code:-null}" \
+                    "$([[ "$control_status" == - ]] && printf null || printf '"%s"' "$(_zf_json_escape "$control_status")")" \
+                    "$([[ "$control_target" == - ]] && printf null || printf '"%s"' "$(_zf_json_escape "$control_target")")"
             done
             printf ']}\n'
         fi
@@ -2058,7 +2068,7 @@ cmd_help() {
         list)      printf 'Список стратегий Flowseal (* — применённая).\n' ;;
         use)       printf 'Применить стратегию. Можно частью имени: sonar use alt12\n' ;;
         status)    printf 'Состояние сервиса, стратегии, версии zapret/Flowseal, окружение.\n' ;;
-        check)     printf 'Проверить доступность заданных HTTP/CDN-целей. Не проверяет UDP/QUIC.\n  --json — совместимый агрегированный JSON v1\n  --json-v2 — категории и результаты отдельных проверок\n' ;;
+        check)     printf 'Проверить HTTP, контент, скорость и HTTP/3/QUIC. Не проверяет Discord Voice/UDP.\n  --json — совместимый агрегированный JSON v1\n  --json-v2 — категории и результаты отдельных проверок\n' ;;
         validate)  printf 'Проверить все установленные стратегии без изменения конфига или сервиса.\n  --json — машинно-читаемый результат\n' ;;
         export-diagnostic) printf 'Сформировать безопасный JSON для отчёта об ошибке.\n  --output <файл> — записать атомарно с правами 0600\n' ;;
         snapshots) printf 'Показать доступные snapshots Flowseal.\n  --json — машинно-читаемый результат\n' ;;

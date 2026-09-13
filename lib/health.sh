@@ -18,6 +18,8 @@
 _ZF_HEALTH_SH=1
 
 ZF_HEALTH_TIMEOUT="${ZF_HEALTH_TIMEOUT:-8}"
+ZF_HEALTH_QUIC_TIMEOUT="${ZF_HEALTH_QUIC_TIMEOUT:-5}"
+ZF_HEALTH_INCLUDE_QUIC="${ZF_HEALTH_INCLUDE_QUIC:-1}"
 
 # Цвета для CLI-вывода: включаются только в интерактивном терминале.
 # В параллельном режиме (fork) наследуются дочерними процессами.
@@ -77,6 +79,9 @@ ZF_HEALTH_MEDIA=(
     "https://discord.com/api/download?platform=linux&format=tar.gz|1000000||200"
 )
 
+ZF_HEALTH_QUIC_TARGET="${ZF_HEALTH_QUIC_TARGET:-https://discord.com/api/v9/experiments}"
+ZF_HEALTH_QUIC_CONTROL="${ZF_HEALTH_QUIC_CONTROL:-https://cloudflare-quic.com/}"
+
 # --- Хекс первых N байт файла ------------------------------------------------
 # xxd есть не везде; od — часть coreutils и есть всегда. В fallback критично
 # удалять и пробелы, и переводы строк: od выводит "ff d8 ff".
@@ -107,10 +112,20 @@ _zf_code_ok() {
 # для остальных — 200|204|301|302|303|307|308.
 _zf_health_write_result() {
     local file="$1" category="$2" target="$3" status="$4" reason="$5"
-    local http_code="${6:-}" bytes="${7:-}" speed_kbps="${8:-}"
+    local http_code="${6:--}" bytes="${7:--}" speed_kbps="${8:--}"
+    local http_version="${9:--}" curl_exit_code="${10:--}" control_status="${11:--}"
+    local control_target="${12:--}"
     [[ -n "$file" ]] || return 0
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$category" "$target" "$status" "$reason" "$http_code" "$bytes" "$speed_kbps" > "$file"
+    [[ -n "$http_code" ]] || http_code=-
+    [[ -n "$bytes" ]] || bytes=-
+    [[ -n "$speed_kbps" ]] || speed_kbps=-
+    [[ -n "$http_version" ]] || http_version=-
+    [[ -n "$curl_exit_code" ]] || curl_exit_code=-
+    [[ -n "$control_status" ]] || control_status=-
+    [[ -n "$control_target" ]] || control_target=-
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$category" "$target" "$status" "$reason" "$http_code" "$bytes" "$speed_kbps" \
+        "$http_version" "$curl_exit_code" "$control_status" "$control_target" > "$file"
 }
 
 zf_check_host() {
@@ -223,6 +238,86 @@ zf_check_media() {
     return $rc
 }
 
+# --- HTTP/3/QUIC -------------------------------------------------------------
+# Проверка намеренно использует --http3-only: --http3 допускает fallback на TCP
+# и не доказывает, что запрос действительно прошёл через QUIC.
+_zf_curl_has_http3() {
+    local version help
+    command -v curl >/dev/null 2>&1 || return 1
+    version=$(LC_ALL=C curl -q --version 2>/dev/null) || return 1
+    awk '/^Features:/ { for (i = 2; i <= NF; i++) if ($i == "HTTP3") found=1 } END { exit !found }' \
+        <<< "$version" || return 1
+    help=$(LC_ALL=C curl -q --help all 2>/dev/null) || return 1
+    grep -q -- '--http3-only' <<< "$help"
+}
+
+_zf_http3_request() {
+    local url="$1" out rc
+    if out=$(LC_ALL=C curl -q --http3-only --noproxy '*' \
+        --connect-timeout "$ZF_HEALTH_QUIC_TIMEOUT" --max-time "$ZF_HEALTH_QUIC_TIMEOUT" \
+        --silent --show-error --output /dev/null --write-out '%{http_code}|%{http_version}' \
+        "$url" 2>/dev/null); then
+        rc=0
+    else
+        rc=$?
+    fi
+    ZF_HTTP3_EXIT_CODE=$rc
+    ZF_HTTP3_HTTP_CODE="${out%%|*}"
+    ZF_HTTP3_VERSION="${out##*|}"
+}
+
+_zf_http3_succeeded() {
+    (( ZF_HTTP3_EXIT_CODE == 0 )) \
+        && [[ "$ZF_HTTP3_VERSION" == 3 && "$ZF_HTTP3_HTTP_CODE" =~ ^[1-5][0-9][0-9]$ ]]
+}
+
+zf_check_quic() {
+    local result_file="${1:-}" target_rc target_code target_version
+    if ! _zf_curl_has_http3; then
+        printf '  %sNOT CHECKED%s  %-42s curl без HTTP/3\n' \
+            "$_ZF_C_DIM" "$_ZF_C_OFF" "$ZF_HEALTH_QUIC_TARGET"
+        _zf_health_write_result "$result_file" quic "$ZF_HEALTH_QUIC_TARGET" \
+            NOT_CHECKED http3_unsupported
+        return 2
+    fi
+
+    _zf_http3_request "$ZF_HEALTH_QUIC_TARGET"
+    target_rc=$ZF_HTTP3_EXIT_CODE
+    target_code=$ZF_HTTP3_HTTP_CODE
+    target_version=$ZF_HTTP3_VERSION
+    if _zf_http3_succeeded; then
+        printf '  %sOK%s    %-42s HTTP/%s %s\n' \
+            "$_ZF_C_OK" "$_ZF_C_OFF" "$ZF_HEALTH_QUIC_TARGET" "$target_version" "$target_code"
+        _zf_health_write_result "$result_file" quic "$ZF_HEALTH_QUIC_TARGET" PASS \
+            http3_response "$target_code" "" "" "$target_version" "$target_rc"
+        return 0
+    fi
+    if (( target_rc == 4 )); then
+        printf '  %sNOT CHECKED%s  %-42s HTTP/3 не поддерживается curl\n' \
+            "$_ZF_C_DIM" "$_ZF_C_OFF" "$ZF_HEALTH_QUIC_TARGET"
+        _zf_health_write_result "$result_file" quic "$ZF_HEALTH_QUIC_TARGET" \
+            NOT_CHECKED http3_unsupported "" "" "" "$target_version" "$target_rc"
+        return 2
+    fi
+
+    _zf_http3_request "$ZF_HEALTH_QUIC_CONTROL"
+    if _zf_http3_succeeded; then
+        printf '  %sFAIL%s  %-42s HTTP/3 недоступен (контрольная цель работает)\n' \
+            "$_ZF_C_BAD" "$_ZF_C_OFF" "$ZF_HEALTH_QUIC_TARGET"
+        _zf_health_write_result "$result_file" quic "$ZF_HEALTH_QUIC_TARGET" FAIL \
+            target_http3_failed "$target_code" "" "" "$target_version" "$target_rc" PASS \
+            "$ZF_HEALTH_QUIC_CONTROL"
+        return 1
+    fi
+
+    printf '  %sNOT CHECKED%s  %-42s HTTP/3 недоступен и на контрольной цели\n' \
+        "$_ZF_C_DIM" "$_ZF_C_OFF" "$ZF_HEALTH_QUIC_TARGET"
+    _zf_health_write_result "$result_file" quic "$ZF_HEALTH_QUIC_TARGET" NOT_CHECKED \
+        control_http3_failed "$target_code" "" "" "$target_version" "$target_rc" FAIL \
+        "$ZF_HEALTH_QUIC_CONTROL"
+    return 2
+}
+
 # --- Полная проверка ---------------------------------------------------------
 # zf_health_check → 0 если всё прошло. Печатает отчёт.
 # HTTP- и медиа-проверки запускаются параллельно для скорости.
@@ -250,6 +345,11 @@ zf_health_check() {
         ( zf_check_media "$spec" "$tmp_dir/media_$j.result" > "$tmp_dir/media_$j.out" 2>&1; echo $? > "$tmp_dir/media_$j.rc" ) &
         j=$((j + 1))
     done
+
+    if [[ "$ZF_HEALTH_INCLUDE_QUIC" == 1 ]]; then
+        total=$((total + 1))
+        ( zf_check_quic "$tmp_dir/quic.result" > "$tmp_dir/quic.out" 2>&1; echo $? > "$tmp_dir/quic.rc" ) &
+    fi
 
     wait
 
@@ -282,6 +382,18 @@ zf_health_check() {
             j=$((j + 1))
         done
     done
+
+    if [[ "$ZF_HEALTH_INCLUDE_QUIC" == 1 ]]; then
+        printf 'HTTP/3 (QUIC):\n'
+        cat "$tmp_dir/quic.out" 2>/dev/null
+        [[ -f "$tmp_dir/quic.result" ]] && ZF_HEALTH_RESULTS+=("$(cat "$tmp_dir/quic.result")")
+        rc=$(cat "$tmp_dir/quic.rc" 2>/dev/null)
+        case "$rc" in
+            0) ;;
+            2) skipped=$((skipped + 1)) ;;
+            *) failed=$((failed + 1)) ;;
+        esac
+    fi
 
     rm -rf "$tmp_dir"
     ZF_HEALTH_PASSED=$((total - failed - skipped))

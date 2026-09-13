@@ -19,16 +19,16 @@
     },
     "scope": {
       "type": "array",
-      "const": ["http", "content", "speed"]
+      "const": ["http", "content", "speed", "quic"]
     },
     "checks": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["category", "target", "status", "reason", "http_code", "bytes", "speed_kbps"],
+        "required": ["category", "target", "status", "reason", "http_code", "bytes", "speed_kbps", "http_version", "curl_exit_code", "control_status", "control_target"],
         "properties": {
-          "category": { "enum": ["http", "content", "speed"] },
+          "category": { "enum": ["http", "content", "speed", "quic"] },
           "target": { "type": "string", "minLength": 1 },
           "status": { "enum": ["PASS", "FAIL", "NOT_CHECKED"] },
           "reason": {
@@ -42,12 +42,20 @@
               "signature_unavailable",
               "signature_mismatch",
               "signature_match",
-              "speed_threshold_met"
+              "speed_threshold_met",
+              "http3_response",
+              "http3_unsupported",
+              "target_http3_failed",
+              "control_http3_failed"
             ]
           },
           "http_code": { "type": ["integer", "null"], "minimum": 100, "maximum": 599 },
           "bytes": { "type": ["integer", "null"], "minimum": 0 },
-          "speed_kbps": { "type": ["integer", "null"], "minimum": 0 }
+          "speed_kbps": { "type": ["integer", "null"], "minimum": 0 },
+          "http_version": { "type": ["string", "null"], "enum": ["3", null] },
+          "curl_exit_code": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 },
+          "control_status": { "type": ["string", "null"], "enum": ["PASS", "FAIL", null] },
+          "control_target": { "type": ["string", "null"], "format": "uri" }
         }
       }
     }

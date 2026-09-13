@@ -33,7 +33,7 @@ On servers and remote hosts, `try` temporarily stops and repeatedly restarts the
 - Results depend on the provider, blocking method, and protocol.
 - Do not install it over another zapret deployment: processes and NFQUEUE rules will conflict.
 - To explicitly migrate a plain zapret v1 deployment, use `sudo env MIGRATE_ZAPRET=1 ./install.sh`; otherwise the installer stops.
-- `sonar check` tests specific HTTP/CDN targets. Success does not prove that Discord Voice, QUIC, YouTube video, or zapret itself is working.
+- `sonar check` tests specific HTTP/CDN targets and, when supported by the installed `curl`, probes Discord over HTTP/3 without TCP fallback. Success does not prove that Discord Voice, YouTube video, or zapret itself is working.
 
 ## If it does not work
 
@@ -82,7 +82,7 @@ Installation, reinstallation, service management, and uninstall are tested on Ub
 
 | Command | Purpose |
 |---|---|
-| `sonar check [--json\|--json-v2]` | Check HTTP/CDN targets; JSON v1 preserves aggregates, while v2 adds categories and individual results |
+| `sonar check [--json\|--json-v2]` | Check HTTP/CDN and HTTP/3/QUIC; JSON v1 preserves the previous HTTP/content scope, while v2 adds categories and individual results |
 | `sonar doctor` | Check the service, config, nfqws, and active strategy; `sudo sonar doctor` also verifies firewall interception |
 | `sonar status [--json]` | Show state, modes, and versions; JSON excludes preflight checks |
 | `sonar validate [--json]` | Validate every strategy through translation and `nfqws --dry-run` without applying it |
@@ -90,7 +90,9 @@ Installation, reinstallation, service management, and uninstall are tested on Ub
 | `sonar log [-f] [period]` | Show the systemd journal |
 | `sonar --debug <command>` | Enable shell tracing and verbose curl output |
 
-`PASS` means that a specific check succeeded, `FAIL` means it failed, and `NOT CHECKED` means that the probe could not produce a meaningful result. An unchecked target is not counted as passed but does not fail the command by itself; a non-zero exit code is returned when any check reports `FAIL`. `--json` keeps the compatible v1 schema with its `skipped` field, while `--json-v2` returns `not_checked` and individual `http`, `content`, and `speed` results. UDP and QUIC are not in scope yet.
+`PASS` means that a specific check succeeded, `FAIL` means it failed, and `NOT CHECKED` means that the probe could not produce a meaningful result. An unchecked target is not counted as passed but does not fail the command by itself; a non-zero exit code is returned when any check reports `FAIL`. `--json` keeps the compatible v1 schema with its `skipped` field, while `--json-v2` returns `not_checked` and individual `http`, `content`, `speed`, and `quic` results.
+
+The QUIC probe uses `curl --http3-only` with proxies disabled so that TCP fallback cannot produce a false success. If Discord does not respond, a control HTTP/3 target is checked: a successful control means `FAIL` for Discord only, while failure of both targets produces `NOT CHECKED`. This indicates different network paths but does not by itself prove filtering. The probe does not test Discord Voice/STUN.
 
 The process exit status matches the command result: `0` means success and a non-zero status means a failed check or operation. JSON commands preserve this contract and are safe to use in monitoring and automation.
 
