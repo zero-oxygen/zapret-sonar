@@ -83,7 +83,7 @@ cat > "$TEST_DIR/bin/curl" <<'EOF'
 sleep 1
 case "$*" in
     *Flowseal*) printf '{"tag_name":"1.10.2"}\n' ;;
-    *zapret-sonar*) printf '{"tag_name":"v1.3.4"}\n' ;;
+    *zapret-sonar*) printf '{"tag_name":"v1.4.0"}\n' ;;
     *) printf '{"tag_name":"v72.13"}\n' ;;
 esac
 EOF

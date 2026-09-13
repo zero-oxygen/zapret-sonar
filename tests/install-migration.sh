@@ -131,8 +131,8 @@ SERVICE_NAME=zapret-layout
 install_flow
 [[ -x "$ZAPRET_BASE/zapret-sonar/zapret-sonar" ]]
 [[ -x "$ZAPRET_BASE/zapret-sonar/zapret-sonar-tui" ]]
-[[ "$(readlink "$ZAPRET_BASE/zapret-sonar/current")" == releases/1.3.4 ]]
-[[ -f "$ZAPRET_BASE/zapret-sonar/releases/1.3.4/RELEASE" ]]
+[[ "$(readlink "$ZAPRET_BASE/zapret-sonar/current")" == releases/1.4.0 ]]
+[[ -f "$ZAPRET_BASE/zapret-sonar/releases/1.4.0/RELEASE" ]]
 grep -Fq 'ZF_BIN_DEST="${ZF_BIN_DEST:-'"$BIN_DEST"'}"' "$ZAPRET_BASE/zapret-sonar/lib/paths.sh"
 [[ "$(readlink -f "$BIN_DEST/sonar")" == "$ZAPRET_BASE/zapret-sonar/zapret-sonar" ]]
 grep -Fq -- '--install-root "$root"' "$ZAPRET_BASE/zapret-sonar/zapret-sonar"

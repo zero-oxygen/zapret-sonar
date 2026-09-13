@@ -39,6 +39,7 @@ C_ACC=$'\033[34m'; C_WARN=$'\033[33m'; C_OFF=$'\033[0m'
 SEP_CHECK="${C_DIM}── Проверка${C_OFF}"
 SEP_CONF="${C_DIM}── Настройки${C_OFF}"
 SEP_SVC="${C_DIM}── Сервис${C_OFF}"
+MENU_CHECK='Проверить HTTP/CDN и QUIC'
 
 pause() { printf '\n%sEnter — назад%s' "$C_DIM" "$C_OFF"; read -r -s -n1 _ 2>/dev/null || true; printf '\n'; }
 
@@ -120,11 +121,14 @@ pick_strategy() {
     # строку по пробелам, а имена содержат пробелы, так что {2..} отрезал бы
     # часть имени. Какая стратегия применена, видно в шапке меню и в самом
     # preview (_describe печатает «применена сейчас»).
-    local cur; cur=$("$CLI" _state strategy 2>/dev/null)
+    local cur header; cur=$("$CLI" _state strategy 2>/dev/null)
+    header='Enter — применить · Esc — отмена'
+    [[ -n "$cur" ]] && header+=$'\n'"сейчас: $cur"
     "$CLI" _list 2>/dev/null \
         | fzf --no-multi --height=100% --border=rounded \
               --prompt='стратегия > ' \
-              --header="Enter — применить · Esc — отмена${cur:+ · сейчас: $cur}" \
+              --header="$header" \
+              --header-first \
               --preview="$CLI _describe {} 2>&1" \
               --preview-window='right,58%,border-left,wrap'
 }
@@ -272,7 +276,7 @@ main_menu() {
             'Подобрать рабочую стратегию автоматически' \
             'Выбрать стратегию вручную' \
             "$SEP_CHECK" \
-            'Проверить HTTP/CDN-цели' \
+            "$MENU_CHECK" \
             'Показать, что заблокировано без обхода' \
             'Состояние и окружение' \
             "$SEP_CONF" \
@@ -296,7 +300,7 @@ main_menu() {
         case "$choice" in
             'Подобрать рабочую стратегию автоматически') action_try ;;
             'Выбрать стратегию вручную')                 action_use ;;
-            'Проверить HTTP/CDN-цели')                    printf '\n'; "$CLI" check; pause ;;
+            "$MENU_CHECK")                              printf '\n'; "$CLI" check; pause ;;
             'Показать, что заблокировано без обхода')    printf '\n'; "$CLI" baseline; pause ;;
             'Состояние и окружение')                     printf '\n'; "$CLI" status; pause ;;
             'Управление сайтами обхода')                 action_site ;;
