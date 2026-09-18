@@ -2,15 +2,34 @@
 
 [Русский](README.md) | [English](README.en.md)
 
+[![CI](https://github.com/zero-oxygen/zapret-sonar/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/zero-oxygen/zapret-sonar/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/zero-oxygen/zapret-sonar?sort=semver)](https://github.com/zero-oxygen/zapret-sonar/releases/latest)
+[![License](https://img.shields.io/github/license/zero-oxygen/zapret-sonar)](LICENSE)
+
 <p align="center">
   <img src=".github/social-preview.png" alt="zapret-sonar" width="640">
 </p>
 
-A Linux wrapper for [zapret](https://github.com/bol-van/zapret) v1 and [Flowseal](https://github.com/Flowseal/zapret-discord-youtube) strategies. It translates Flowseal `.bat` strategies into `nfqws` arguments and manages installation, selection, checks, and updates.
+A Linux wrapper for GNU/Linux systems with `systemd`, built around [zapret](https://github.com/bol-van/zapret) v1 and [Flowseal](https://github.com/Flowseal/zapret-discord-youtube) strategies. It translates Flowseal `.bat` strategies into `nfqws` arguments and manages installation, selection, checks, and updates.
 
 > zapret v1 is in EOL mode: upstream only provides bug fixes. zapret2 is not supported yet and is being investigated separately.
 
+## Navigation
+
+- [Quick start](#quick-start)
+- [What it is and is not](#what-it-is-and-is-not)
+- [If it does not work](#if-it-does-not-work)
+- [Requirements](#requirements)
+- [Commands](#commands)
+- [TUI](#tui)
+- [Updates and recovery](#updates-and-recovery)
+- [Check limitations](#check-limitations)
+
 ## Quick start
+
+Before running it, note that `sudo sonar try --keep` temporarily stops and repeatedly restarts the service. On a server or remote host, this may interrupt active connections.
+
+`install.sh` downloads `zapret` and Flowseal strategies from GitHub, verifies the binaries, installs them under `/opt/zapret`, and creates a systemd service. Autostart is not enabled automatically: choose a working strategy first.
 
 ```bash
 git clone https://github.com/zero-oxygen/zapret-sonar.git
@@ -23,11 +42,14 @@ sudo sonar enable
 
 `try --keep` keeps the first strategy that passes the HTTP checks without detected regressions. It is not guaranteed to be the objectively best strategy for every site or protocol. `enable` enables autostart for the configured service.
 
-On servers and remote hosts, `try` temporarily stops and repeatedly restarts the service, so active connections may be interrupted.
+`sonar check` only reads state and runs network probes, so it normally does not need `sudo`. `sudo sonar enable` changes systemd autostart and requires root privileges.
+
+The documented installation path intentionally uses a checkout instead of `curl | bash`, so you can inspect the exact installer before running it as root. You can also use a source archive from the required GitHub tag.
 
 ## What it is and is not
 
 - A GNU/Linux tool built around `systemd`, `nfqws`, and nftables.
+- Supported scope is Linux with `systemd`; OpenRC, runit, s6, dinit, and other init systems are not supported currently.
 - Not a VPN or proxy: traffic is not routed through a third-party server.
 - Not an independent strategy collection: strategies and lists come from Flowseal.
 - Results depend on the provider, blocking method, and protocol.
@@ -59,7 +81,7 @@ Also check:
 - bash 4+, curl, tar, sha256sum, flock, iproute2, and standard GNU coreutils/findutils/grep/sed;
 - nftables (recommended), or iptables together with `ipset` and `ip6tables`;
 - `restorecon` from policycoreutils on systems with SELinux enabled;
-- `unzip` only for the Flowseal branch fallback;
+- `unzip` only for a Flowseal ZIP archive fallback;
 - fzf for the optional TUI;
 - git for the installation method shown above.
 
@@ -104,7 +126,7 @@ The process exit status matches the command result: `0` means success and a non-
 | `sonar site --list` | List user domains |
 | `sonar site --remove <domain>` | Remove a domain; run `sudo sonar restart` afterward |
 | `sudo sonar gamefilter off\|tcp\|udp\|both` | Configure game ports and apply immediately |
-| `sudo sonar ipset none\|any\|loaded` | Change IP filtering; run `sudo sonar restart` afterward |
+| `sudo sonar ipset none\|any\|loaded` | Change IP filtering; run `sudo sonar restart` afterward; `any` may break access to ordinary websites |
 
 ### Updates and service
 
@@ -112,7 +134,7 @@ The process exit status matches the command result: `0` means success and a non-
 |---|---|
 | `sudo sonar update [--force]` | Update Flowseal strategies, lists, and `.bin` payloads |
 | `sudo sonar upgrade [--force]` | Update `nfqws`, `ip2net`, and `mdig` with SHA-256 verification |
-| `sonar self-update [--force]` | Update zapret-sonar from a release asset with SHA-256 verification and rollback |
+| `sonar self-update [--force] [--version <version>]` | Update zapret-sonar from a release asset with SHA-256 verification and rollback |
 | `sonar snapshots [--json]` | List the current and rollback Flowseal snapshots |
 | `sudo sonar rollback [snapshot]` | Switch to the previous or selected Flowseal snapshot |
 | `sudo sonar start\|stop\|restart` | Control the service |
@@ -125,7 +147,7 @@ The process exit status matches the command result: `0` means success and a non-
 sonar-tui
 ```
 
-The fzf-based TUI shows service and update state, provides strategy previews, runs checks, and changes settings. Update checks do not block the interface: on a cold cache the header automatically changes from “checking…” to the result. Live header updates require an fzf version with `bg-transform-header`; older versions update after the menu is redrawn.
+The [fzf](https://github.com/junegunn/fzf)-based TUI shows service and update state, provides strategy previews, runs checks, and changes settings. If `fzf` is not installed, use the CLI or install `fzf` separately. Update checks do not block the interface: on a cold cache the header automatically changes from “checking…” to the result. Live header updates require an fzf version with `bg-transform-header`; older versions update after the menu is redrawn.
 
 The settings section can add, list, and remove user sites, update Flowseal, roll snapshots back, and update both the engine and zapret-sonar itself.
 
