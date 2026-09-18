@@ -2,15 +2,34 @@
 
 [Русский](README.md) | [English](README.en.md)
 
+[![CI](https://github.com/zero-oxygen/zapret-sonar/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/zero-oxygen/zapret-sonar/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/zero-oxygen/zapret-sonar?sort=semver)](https://github.com/zero-oxygen/zapret-sonar/releases/latest)
+[![License](https://img.shields.io/github/license/zero-oxygen/zapret-sonar)](LICENSE)
+
 <p align="center">
   <img src=".github/social-preview.png" alt="zapret-sonar" width="640">
 </p>
 
-Linux-обёртка над [zapret](https://github.com/bol-van/zapret) v1 со стратегиями [Flowseal](https://github.com/Flowseal/zapret-discord-youtube). Переводит `.bat`-стратегии Flowseal в аргументы `nfqws` и управляет установкой, подбором, проверкой и обновлением.
+Linux-обёртка для GNU/Linux с `systemd` над [zapret](https://github.com/bol-van/zapret) v1 со стратегиями [Flowseal](https://github.com/Flowseal/zapret-discord-youtube). Переводит `.bat`-стратегии Flowseal в аргументы `nfqws` и управляет установкой, подбором, проверкой и обновлением.
 
 > zapret v1 находится в режиме EOL: upstream выпускает только исправления ошибок. zapret2 пока не поддерживается и исследуется отдельно.
 
+## Навигация
+
+- [Быстрый старт](#быстрый-старт)
+- [Что это и что это не](#что-это-и-что-это-не)
+- [Если не заработало](#если-не-заработало)
+- [Требования](#требования)
+- [Команды](#команды)
+- [TUI](#tui)
+- [Обновления и восстановление](#обновления-и-восстановление)
+- [Ограничения проверок](#ограничения-проверок)
+
 ## Быстрый старт
+
+Перед запуском учтите: `sudo sonar try --keep` временно останавливает и многократно перезапускает сервис. На сервере или удалённой машине это может прервать текущие соединения.
+
+`install.sh` скачивает `zapret` и стратегии Flowseal из GitHub, проверяет бинарники, устанавливает их в `/opt/zapret` и создаёт systemd-сервис. Автозапуск не включается автоматически: сначала нужно подобрать стратегию.
 
 ```bash
 git clone https://github.com/zero-oxygen/zapret-sonar.git
@@ -23,11 +42,14 @@ sudo sonar enable
 
 `try --keep` оставляет первую стратегию, прошедшую HTTP-проверки без обнаруженных регрессий. Это не означает, что она объективно лучшая для всех сайтов и протоколов. `enable` включает автозапуск уже настроенного сервиса.
 
-На сервере или удалённой машине `try` временно останавливает и многократно перезапускает сервис, поэтому текущие соединения могут прерываться.
+`sonar check` только читает состояние и выполняет сетевые проверки, поэтому обычно не требует `sudo`. `sudo sonar enable` меняет systemd-autostart и требует права root.
+
+Установка намеренно показана через checkout, а не через `curl | bash`: перед запуском от root можно просмотреть точную версию установщика. В качестве альтернативы используйте source archive нужного GitHub-тега.
 
 ## Что это и что это не
 
 - GNU/Linux-инструмент, ориентированный на `systemd`, `nfqws` и nftables.
+- Поддерживаемый scope — Linux с `systemd`; OpenRC, runit, s6, dinit и другие init-системы сейчас не поддерживаются.
 - Не VPN и не прокси: трафик не отправляется на сторонний сервер.
 - Не самостоятельный набор стратегий: стратегии и списки приходят из Flowseal.
 - Результат зависит от провайдера, вида блокировки и конкретного протокола.
@@ -59,7 +81,7 @@ sonar log
 - bash 4+, curl, tar, sha256sum, flock, iproute2 и стандартные GNU coreutils/findutils/grep/sed;
 - nftables (рекомендуется) или iptables вместе с `ipset` и `ip6tables`;
 - `restorecon` из policycoreutils на системах с активным SELinux;
-- `unzip` нужен только для fallback-обновления из ветки Flowseal;
+- `unzip` нужен только для fallback-обновления Flowseal из ZIP-архива;
 - fzf для TUI (опционально);
 - git для показанного способа установки.
 
@@ -104,7 +126,7 @@ QUIC probe использует `curl --http3-only` и отключает proxy,
 | `sonar site --list` | Показать пользовательские домены |
 | `sonar site --remove <домен>` | Удалить домен; затем нужен `sudo sonar restart` |
 | `sudo sonar gamefilter off\|tcp\|udp\|both` | Настроить игровые порты и сразу применить конфиг |
-| `sudo sonar ipset none\|any\|loaded` | Изменить IP-фильтр; затем нужен `sudo sonar restart` |
+| `sudo sonar ipset none\|any\|loaded` | Изменить IP-фильтр; затем нужен `sudo sonar restart`; `any` может сломать доступ к обычным сайтам |
 
 ### Обновление и сервис
 
@@ -112,7 +134,7 @@ QUIC probe использует `curl --http3-only` и отключает proxy,
 |---|---|
 | `sudo sonar update [--force]` | Обновить стратегии, списки и `.bin` Flowseal |
 | `sudo sonar upgrade [--force]` | Обновить `nfqws`, `ip2net`, `mdig` с проверкой sha256 |
-| `sonar self-update [--force]` | Обновить zapret-sonar из release asset с проверкой SHA-256 и rollback |
+| `sonar self-update [--force] [--version <версия>]` | Обновить zapret-sonar из release asset с проверкой SHA-256 и rollback |
 | `sonar snapshots [--json]` | Показать текущий и резервный snapshots Flowseal |
 | `sudo sonar rollback [snapshot]` | Переключиться на предыдущий или выбранный snapshot Flowseal |
 | `sudo sonar start\|stop\|restart` | Управлять сервисом |
@@ -125,7 +147,7 @@ QUIC probe использует `curl --http3-only` и отключает proxy,
 sonar-tui
 ```
 
-TUI на fzf показывает состояние сервиса и обновлений, позволяет выбирать стратегии с preview, запускать проверки и менять настройки. Проверка обновлений не блокирует интерфейс: на холодном кэше статус меняется с «проверка…» на результат автоматически. Для live-обновления header нужен fzf с `bg-transform-header`; на старых версиях статус обновится после перерисовки меню.
+TUI на [fzf](https://github.com/junegunn/fzf) показывает состояние сервиса и обновлений, позволяет выбирать стратегии с preview, запускать проверки и менять настройки. Если `fzf` не установлен, используйте CLI или установите `fzf` отдельно. Проверка обновлений не блокирует интерфейс: на холодном кэше статус меняется с «проверка…» на результат автоматически. Для live-обновления header нужен fzf с `bg-transform-header`; на старых версиях статус обновится после перерисовки меню.
 
 В разделе настроек доступны добавление, просмотр и удаление пользовательских сайтов, обновление Flowseal, откат snapshots, обновление движка и самого zapret-sonar.
 
