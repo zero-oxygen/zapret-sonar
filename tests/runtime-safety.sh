@@ -18,6 +18,29 @@ printf '1.10.2\n' > "$ZF_ZAPRET_BASE/.flowseal-version"
 # shellcheck source=../zapret-sonar
 source "$PROJECT_DIR/zapret-sonar"
 
+# Фоновый воркер запускается отдельным процессом, поэтому подменить его
+# `curl` из этого теста нельзя. Подменяем сам воркер: он пишет детерминированный
+# кэш и намеренно отстаёт, чтобы проверка асинхронности была честной.
+cat > "$TEST_DIR/fake-self" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == _update_check_worker ]] || exit 1
+sleep 2
+cat > "$ZF_UPDATE_CACHE_DIR/update-check" <<'CACHE'
+check_state=ok
+flowseal_local=1.10.2
+flowseal_remote=1.10.2
+zapret_local=v72.13
+zapret_remote=v72.13
+sonar_remote=1.2.2
+last_check=9999999999
+CACHE
+EOF
+chmod +x "$TEST_DIR/fake-self"
+_zf_spawn_update_check() {
+    ZF_UPDATE_CACHE_DIR="$_ZF_UPDATE_CACHE_DIR" "$TEST_DIR/fake-self" _update_check_worker \
+        </dev/null >/dev/null 2>&1 &
+}
+
 victim="$TEST_DIR/victim"
 printf 'keep-me\n' > "$victim"
 ln -s "$victim" "$ZF_RUNTIME_DIR/operations.lock"
@@ -77,31 +100,17 @@ unset -f curl
 printf 'PASS: HTTP 451 is treated as a failed check\n'
 
 rm -f "$ZF_UPDATE_CACHE_DIR/update-check"
-# Проверка обязана быть асинхронной и офлайн-детерминированной: воркер
-# запускается отдельным процессом, поэтому обычный override `curl` до него
-# не доходит и тест ловил реальные релизы GitHub.
-cat > "$TEST_DIR/fake-self" <<'EOF'
-#!/usr/bin/env bash
-[[ "${1:-}" == _update_check_worker ]] || exit 1
-cat > "$ZF_UPDATE_CACHE_DIR/update-check" <<'CACHE'
-check_state=ok
-flowseal_local=1.10.2
-flowseal_remote=1.10.2
-zapret_local=v72.13
-zapret_remote=v72.13
-sonar_remote=1.2.2
-last_check=9999999999
-CACHE
-EOF
-chmod +x "$TEST_DIR/fake-self"
-export ZF_SELF="$TEST_DIR/fake-self"
 start=$(date +%s%N)
-[[ "$(_zf_update_status)" == "проверка…" ]]
+status=$(_zf_update_status)
 elapsed=$(( ($(date +%s%N) - start) / 1000000 ))
-(( elapsed < 500 ))
-for _ in {1..30}; do
+[[ "$status" == "проверка…" ]] || { printf 'FAIL: cold cache returned %s\n' "$status" >&2; exit 1; }
+(( elapsed < 1000 )) || { printf 'FAIL: update status blocked for %s ms\n' "$elapsed" >&2; exit 1; }
+[[ ! -f "$ZF_UPDATE_CACHE_DIR/update-check" ]] \
+    || { printf 'FAIL: worker finished before the first status call\n' >&2; exit 1; }
+for _ in {1..40}; do
     [[ -f "$ZF_UPDATE_CACHE_DIR/update-check" ]] && break
-    sleep 0.2
+    sleep 0.1
 done
-[[ "$(_zf_update_status)" == "актуально" ]]
+status=$(_zf_update_status)
+[[ "$status" == "актуально" ]] || { printf 'FAIL: expected актуально, got %s\n' "$status" >&2; exit 1; }
 printf 'PASS: cold-cache update check is asynchronous\n'
