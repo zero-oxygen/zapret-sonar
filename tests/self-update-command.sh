@@ -14,7 +14,8 @@ export ZF_INSTALL_ROOT="$TEST_DIR/install"
 export ZF_ZAPRET_BASE="$TEST_DIR/zapret"
 export ZF_RUNTIME_DIR="$TEST_DIR/run"
 export ZF_UPDATE_CACHE_DIR="$TEST_DIR/cache"
-mkdir -p "$ZF_INSTALL_ROOT/releases/old" "$ZF_INSTALL_ROOT/lib" "$ZF_ZAPRET_BASE/nfq" "$ZF_RUNTIME_DIR"
+mkdir -p "$ZF_INSTALL_ROOT/releases/old" "$ZF_INSTALL_ROOT/lib" "$ZF_ZAPRET_BASE/nfq" "$ZF_RUNTIME_DIR" \
+    "$ZF_ZAPRET_BASE/init.d/sysv/custom.d"
 printf '#!/usr/bin/env bash\nprintf "zapret-sonar 1.2.2\\n"\n' > "$ZF_INSTALL_ROOT/releases/old/zapret-sonar"
 chmod +x "$ZF_INSTALL_ROOT/releases/old/zapret-sonar"
 ln -s releases/old "$ZF_INSTALL_ROOT/current"
@@ -43,6 +44,11 @@ curl() {
 }
 
 cmd_self_update --force --version "$release_version" >/dev/null
+# Хук ставится из обновлённого кода и должен появиться сразу, не дожидаясь `use`.
+hook="$ZF_ZAPRET_BASE/init.d/sysv/custom.d/50-sonar-udp-conntrack"
+[[ -f "$hook" && ! -L "$hook" ]] || { printf 'FAIL: self-update did not write the UDP conntrack hook\n' >&2; exit 1; }
+[[ "$(stat -c %a "$hook")" == 644 ]]
+grep -q 'sonar-udp-conntrack' "$hook"
 new_target=$(readlink "$ZF_INSTALL_ROOT/current")
 [[ "$new_target" == "releases/$release_version"-* ]]
 [[ "$(readlink "$ZF_INSTALL_ROOT/previous")" == releases/old ]]

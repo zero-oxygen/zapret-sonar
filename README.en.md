@@ -177,7 +177,7 @@ Flowseal .bat -> translate.sh -> NFQWS_OPT -> nfqws --dry-run -> config -> syste
 3. `nfqws --dry-run` validates arguments and referenced files before the config changes.
 4. The config is written atomically and stores the selected strategy and modes.
 5. The service is restarted only after successful validation; the previous config and service state are restored on failure.
-6. `lib/zconfig.sh` also writes `init.d/sysv/custom.d/50-sonar-udp-conntrack`. In zapret's POSTNAT mode generated copies are marked `notrack`; for TCP this is harmless because desync runs after the handshake, but for UDP the conntrack entry would never be confirmed and replies would be dropped as `INVALID` by a local firewall. The hook restores tracking for unfragmented IPv4 UDP copies only, leaving TCP, IPv6 and fragments untouched. `sonar doctor` reports whether it is applied.
+6. `lib/zconfig.sh` also writes `init.d/sysv/custom.d/50-sonar-udp-conntrack`. In zapret's POSTNAT mode generated copies are marked `notrack`; for TCP this is harmless because desync runs after the handshake, but for UDP the conntrack entry would never be confirmed, so replies are not matched to the flow and are dropped by the default firewall policy. The hook restores tracking for unfragmented IPv4 UDP copies only, leaving TCP, IPv6 and fragments untouched. `sonar doctor` reports whether it is applied.
 
 ## Updates and recovery
 
