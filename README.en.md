@@ -177,6 +177,7 @@ Flowseal .bat -> translate.sh -> NFQWS_OPT -> nfqws --dry-run -> config -> syste
 3. `nfqws --dry-run` validates arguments and referenced files before the config changes.
 4. The config is written atomically and stores the selected strategy and modes.
 5. The service is restarted only after successful validation; the previous config and service state are restored on failure.
+6. `lib/zconfig.sh` also writes `init.d/sysv/custom.d/50-sonar-udp-conntrack`. In zapret's POSTNAT mode generated copies are marked `notrack`; for TCP this is harmless because desync runs after the handshake, but for UDP the conntrack entry would never be confirmed and replies would be dropped as `INVALID` by a local firewall. The hook restores tracking for unfragmented IPv4 UDP copies only, leaving TCP, IPv6 and fragments untouched. `sonar doctor` reports whether it is applied.
 
 ## Updates and recovery
 
@@ -202,7 +203,7 @@ If Flowseal is temporarily unavailable, the active tree keeps working. List reta
 ## Check limitations
 
 - YouTube throttling on `googlevideo.com` is not measured reliably.
-- Discord Voice and other UDP scenarios are not tested.
+- Discord Voice and other UDP scenarios are not tested. When Discord HTTP/3 fails while the control target works, `check` prints a hint to run `sudo sonar doctor`: the same symptom is produced by a local UDP conntrack problem, not only by provider filtering.
 - HTTP/3 is tested only for one Discord HTTP target; this does not cover Discord Voice/STUN or arbitrary QUIC scenarios.
 - curl ClientHello differs from browser traffic, including multi-packet TLS.
 - `check` can pass without zapret when targets are already reachable; `try` performs a differential comparison against baseline.
