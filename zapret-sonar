@@ -13,7 +13,7 @@
 
 set -uo pipefail
 
-ZF_VERSION="1.4.0"
+ZF_VERSION="1.4.1"
 ZF_SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 if [[ "${1:-}" == --install-root ]]; then
     [[ $# -ge 2 && -d "$2" && ! -L "$2" ]] || { printf 'ошибка: некорректный install root\n' >&2; exit 1; }
@@ -801,7 +801,29 @@ cmd_doctor() {
                     if (( post_tcp == 1 && post_udp == 1 && pre_tcp == 1 && pre_udp == 1 )) \
                         && [[ "$postnat_hook" == *'hook postrouting'* && "$postnat_hook" == *'jump postnat'* \
                               && "$prenat" == *'hook prerouting'* ]]; then
-                    printf 'OK (nftables, NFQUEUE %s)\n' "$qnum"
+                        local predefrag hook_path hook_line notrack_line
+                        predefrag=$(nft list chain inet "$table" predefrag_nfqws 2>/dev/null || true)
+                        hook_path=$(zf_udp_conntrack_hook_path)
+                        # Нет notrack — POSTNAT не используется, правило не нужно.
+                        if [[ "$predefrag" != *notrack* ]]; then
+                            printf 'SKIP (POSTNAT не используется)\n'
+                        elif [[ "$predefrag" == *"$ZF_UDP_CONNTRACK_COMMENT"* ]]; then
+                            hook_line=$(grep -n "$ZF_UDP_CONNTRACK_COMMENT" <<< "$predefrag" | head -1 | cut -d: -f1)
+                            notrack_line=$(grep -n 'notrack' <<< "$predefrag" | head -1 | cut -d: -f1)
+                            # Правило после notrack бесполезно: копии уже untracked.
+                            if [[ -n "$hook_line" && -n "$notrack_line" ]] && (( hook_line < notrack_line )); then
+                                printf 'OK (nftables, NFQUEUE %s, UDP conntrack)\n' "$qnum"
+                            else
+                                printf 'FAIL (UDP conntrack hook стоит после notrack: перезапустите %s)\n' "$ZF_SERVICE"
+                                failed=1
+                            fi
+                        elif [[ -f "$hook_path" ]]; then
+                            printf 'FAIL (UDP conntrack hook есть, но не применён: перезапустите %s)\n' "$ZF_SERVICE"
+                            failed=1
+                        else
+                            printf 'FAIL (нет UDP conntrack hook: примените стратегию заново)\n'
+                            failed=1
+                        fi
                     else
                         printf 'FAIL (неполный nftables NFQUEUE %s: postnat tcp=%s udp=%s, prenat tcp=%s udp=%s)\n' \
                             "$qnum" "$post_tcp" "$post_udp" "$pre_tcp" "$pre_udp"; failed=1
@@ -1577,6 +1599,15 @@ cmd_self_update() {
     _zf_invalidate_update_caches
     rm -rf "$tmp"
     trap - EXIT
+    # Хук не зависит от версии CLI, поэтому его достаточно записать заново:
+    # новый файл применится при следующем старте сервиса.
+    if [[ -d "$ZF_ZAPRET_BASE/init.d/sysv/custom.d" ]]; then
+        if zf_write_udp_conntrack_hook; then
+            printf 'UDP conntrack hook обновлён; применится после перезапуска сервиса\n'
+        else
+            printf 'ПРЕДУПРЕЖДЕНИЕ: не удалось обновить UDP conntrack hook\n' >&2
+        fi
+    fi
     printf 'zapret-sonar обновлён: %s -> %s\n' "$ZF_VERSION" "$version"
 }
 

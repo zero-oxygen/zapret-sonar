@@ -8,6 +8,7 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 
 asset_dir="$TEST_DIR/assets"
 bash "$PROJECT_DIR/scripts/build-release.sh" "$asset_dir" >/dev/null
+release_version=$(sed -n 's/^version=//p' "$PROJECT_DIR/RELEASE")
 export ZF_LIBRARY_MODE=1
 export ZF_INSTALL_ROOT="$TEST_DIR/install"
 export ZF_ZAPRET_BASE="$TEST_DIR/zapret"
@@ -37,15 +38,15 @@ curl() {
     while (( $# )); do
         if [[ "$1" == -o ]]; then out="$2"; shift 2; else shift; fi
     done
-    [[ "$out" == *SHA256SUMS ]] && src="$asset_dir/SHA256SUMS" || src="$asset_dir/zapret-sonar-v1.4.0.tar.gz"
+    [[ "$out" == *SHA256SUMS ]] && src="$asset_dir/SHA256SUMS" || src="$asset_dir/zapret-sonar-v$release_version.tar.gz"
     cp "$src" "$out"
 }
 
-cmd_self_update --force --version 1.4.0 >/dev/null
+cmd_self_update --force --version "$release_version" >/dev/null
 new_target=$(readlink "$ZF_INSTALL_ROOT/current")
-[[ "$new_target" == releases/1.4.0-* ]]
+[[ "$new_target" == "releases/$release_version"-* ]]
 [[ "$(readlink "$ZF_INSTALL_ROOT/previous")" == releases/old ]]
-[[ "$(ZF_LIBRARY_MODE=0 "$ZF_INSTALL_ROOT/zapret-sonar" --version)" == 'zapret-sonar 1.4.0' ]]
-cmd_self_update --force --version 1.4.0 >/dev/null
+[[ "$(ZF_LIBRARY_MODE=0 "$ZF_INSTALL_ROOT/zapret-sonar" --version)" == "zapret-sonar $release_version" ]]
+cmd_self_update --force --version "$release_version" >/dev/null
 [[ "$(readlink "$ZF_INSTALL_ROOT/current")" == "$new_target" ]]
 printf 'PASS: self-update command downloads, verifies and activates a release\n'

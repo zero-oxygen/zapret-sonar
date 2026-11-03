@@ -23,7 +23,7 @@ printf '203.0.113.113/32\n' > "$ZF_ZAPRET_BASE/flowseal-current/lists/ipset-all.
 source "$PROJECT_DIR/zapret-sonar"
 systemctl() { [[ "$1" == is-active ]] && printf 'active\n'; }
 status=$(cmd_status_json)
-jq -e '.schema_version == 1 and .command == "status" and .sonar_version == "1.4.0" and .service_state == "active"' <<< "$status" >/dev/null
+jq -e --arg version "$ZF_VERSION" '.schema_version == 1 and .command == "status" and .sonar_version == $version and .service_state == "active"' <<< "$status" >/dev/null
 
 # shellcheck disable=SC2034
 zf_health_check() {

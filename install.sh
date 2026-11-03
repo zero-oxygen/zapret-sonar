@@ -352,6 +352,23 @@ install_zapret() {
     [[ -n "$saved" ]] && cp -a "$saved" "$ZAPRET_BASE/config"
     chown -R root:root "$ZAPRET_BASE"
     info "nfqws: $("$ZAPRET_BASE/nfq/nfqws" --version 2>&1 | head -1)"
+
+    # Хук обязателен до первого старта: иначе UDP-десинк поднимется без
+    # conntrack-совместимости и сломает UDP/QUIC до следующего `sonar use`.
+    install_udp_conntrack_hook
+    info "udp conntrack hook: $ZAPRET_BASE/init.d/sysv/custom.d/50-sonar-udp-conntrack"
+}
+
+# Генерирует хук тем же кодом, что и CLI (lib/zconfig.sh). Subshell нужен,
+# чтобы переменные библиотеки не перетирали ZAPRET_BASE/окружение установщика.
+install_udp_conntrack_hook() {
+    (
+        export ZF_ZAPRET_BASE="$ZAPRET_BASE"
+        export ZF_ZAPRET_CONFIG="$ZAPRET_BASE/config"
+        # shellcheck source=lib/zconfig.sh
+        source "$SRC_DIR/lib/zconfig.sh"
+        zf_write_udp_conntrack_hook
+    ) || die "не удалось записать UDP conntrack hook"
 }
 
 install_flowseal() {

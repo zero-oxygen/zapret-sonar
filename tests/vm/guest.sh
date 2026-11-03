@@ -132,13 +132,20 @@ nfqws_pids() {
 assert_layout() {
     [[ -x /opt/zapret/nfq/nfqws ]] || fail 'nfqws is not installed'
     [[ -L /opt/zapret/zapret-sonar/current ]] || fail 'versioned current link is missing'
-    assert_eq releases/1.4.0 "$(readlink /opt/zapret/zapret-sonar/current)" 'unexpected current release target'
+    local release_version
+    release_version=$(sed -n 's/^version=//p' "$RUN_DIR/source/RELEASE")
+    assert_eq "releases/$release_version" "$(readlink /opt/zapret/zapret-sonar/current)" 'unexpected current release target'
     [[ -f /etc/systemd/system/zapret.service ]] || fail 'systemd unit is missing'
     local link
     for link in zapret-sonar sonar zapret-sonar-tui sonar-tui; do
         [[ -L "/usr/local/bin/$link" ]] || fail "command link is missing: $link"
     done
     [[ -z "$(find /opt/zapret ! -user root -print -quit)" ]] || fail '/opt/zapret contains non-root-owned paths'
+    local hook=/opt/zapret/init.d/sysv/custom.d/50-sonar-udp-conntrack
+    [[ -f "$hook" && ! -L "$hook" ]] || fail 'UDP conntrack hook is missing after install'
+    assert_eq 644 "$(stat -c %a "$hook")" 'UDP conntrack hook has an unexpected mode'
+    assert_eq 0 "$(stat -c %u "$hook")" 'UDP conntrack hook is not root-owned'
+    bash -n "$hook" || fail 'UDP conntrack hook has invalid shell syntax'
 }
 
 assert_validate() {
@@ -181,6 +188,120 @@ assert_running() {
                     "unexpected nftables NFQUEUE rule count for $chain/$protocol"
             done
         done
+        assert_udp_conntrack_rule
+    fi
+}
+
+# Правило обязано быть ровно одно и стоять до notrack: иначе сгенерированные
+# UDP-копии успевают стать untracked, и conntrack-запись не переживает десинк.
+assert_udp_conntrack_rule() {
+    local chain count first_return first_notrack
+    chain=$(nft list chain inet zapret predefrag_nfqws) || fail 'predefrag_nfqws chain is unavailable'
+    count=$(grep -c 'sonar-udp-conntrack' <<< "$chain" || true)
+    assert_eq 1 "$count" 'expected exactly one UDP conntrack rule'
+    first_return=$(awk '/sonar-udp-conntrack/ { print NR; exit }' <<< "$chain")
+    first_notrack=$(awk '/notrack/ { print NR; exit }' <<< "$chain")
+    [[ -n "$first_return" && -n "$first_notrack" ]] || fail 'UDP conntrack rule or notrack rule is missing'
+    (( first_return < first_notrack )) || fail 'UDP conntrack rule must precede notrack'
+}
+
+# Счётчик записей conntrack. В части ядер и образов нет ни
+# /proc/net/nf_conntrack, ни /proc/net/stat/nf_conntrack (nf_conntrack_procfs
+# выключен в сборке), поэтому обе точки проверяются, а при их отсутствии
+# функциональная часть честно пропускается: структурная остаётся.
+conntrack_precise() { [[ -r /proc/net/nf_conntrack ]]; }
+conntrack_counters() { [[ -r /proc/net/stat/nf_conntrack ]]; }
+
+entries_for() {
+    local destination="$1"
+    grep -c "dst=$destination " /proc/net/nf_conntrack 2>/dev/null || true
+}
+
+conntrack_total() {
+    local total=0 field _rest
+    while read -r field _rest; do
+        [[ "$field" == entries ]] && continue
+        total=$((total + 16#${field}))
+    done < /proc/net/stat/nf_conntrack 2>/dev/null
+    printf '%s\n' "$total"
+}
+
+# Сколько пакетов прошло через правило хука: это прямое доказательство, что
+# проба действительно попала в десинк, а не прошла мимо профиля.
+hook_packets() {
+    awk '/sonar-udp-conntrack/ { for (i = 1; i <= NF; i++) if ($i == "packets") { print $(i + 1); exit } }' \
+        <<< "$(nft list chain inet zapret predefrag_nfqws)"
+}
+
+# Отправляет настоящий QUIC Initial: только он гарантированно попадает в
+# профиль UDP/443 с фейком, а значит в тот же путь, что и голосовой UDP.
+send_quic_probe() {
+    cat /opt/zapret/flowseal-current/bin/quic_initial_www_google_com.bin > "/dev/udp/$1/443"
+}
+
+wait_counter_growth() {
+    local before="$1" attempt
+    for ((attempt = 0; attempt < 30; attempt++)); do
+        (( $(hook_packets) > before )) && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+# Ждёт, пока проба оставит след в conntrack: точное совпадение по адресу,
+# когда доступен /proc/net/nf_conntrack, иначе рост общего счётчика.
+wait_tracking() {
+    local destination="$1" before="$2" attempt
+    if conntrack_precise; then
+        for ((attempt = 0; attempt < 30; attempt++)); do
+            [[ "$(entries_for "$destination")" == 1 ]] && return 0
+            sleep 0.1
+        done
+        return 1
+    fi
+    for ((attempt = 0; attempt < 30; attempt++)); do
+        (( $(conntrack_total) > before )) && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+# Дифференциальная проверка: с хуком запись должна пережить десинк. Если и без
+# хука запись сохраняется, значит ядро не воспроизводит дефект — это не ошибка
+# установки, и тест сообщает об этом явно.
+assert_udp_conntrack_effect() {
+    [[ "$PROFILE" == ubuntu-iptables-legacy ]] && return 0
+    local lists=/opt/zapret/flowseal-current/lists/ipset-all.txt
+    local hooked=198.51.100.77 unhooked=198.51.100.78 handle packets_before track_before
+
+    if ! conntrack_precise && ! conntrack_counters; then
+        printf 'NOTE: conntrack introspection is unavailable in this image; functional UDP check skipped\n'
+        return 0
+    fi
+
+    printf '%s/32\n%s/32\n' "$hooked" "$unhooked" > "$lists"
+    run_command sonar restart
+    assert_running
+
+    packets_before=$(hook_packets)
+    track_before=$(conntrack_total)
+    send_quic_probe "$hooked"
+    wait_counter_growth "$packets_before" \
+        || fail 'probe did not reach the UDP desync path: hook counter did not grow'
+    wait_tracking "$hooked" "$track_before" \
+        || fail 'desynced UDP flow lost its conntrack entry: the hook is not effective'
+
+    handle=$(nft -a list chain inet zapret predefrag_nfqws \
+        | awk '/sonar-udp-conntrack/ { for (i = 1; i <= NF; i++) if ($i == "handle") { print $(i + 1); exit } }')
+    [[ -n "$handle" ]] || fail 'could not read the UDP conntrack rule handle'
+    nft delete rule inet zapret predefrag_nfqws handle "$handle"
+
+    track_before=$(conntrack_total)
+    send_quic_probe "$unhooked"
+    if wait_tracking "$unhooked" "$track_before"; then
+        printf 'NOTE: this kernel keeps the UDP conntrack entry without the hook; the differential is not reproducible here\n'
+    else
+        printf 'PASS: UDP conntrack gate reproduced the difference with and without the hook\n'
     fi
 }
 
@@ -256,6 +377,7 @@ main() {
     install_project
     assert_state_preserved "$strategy" "$lists_hash" active enabled
     assert_running
+    assert_udp_conntrack_effect
 
     run_command sonar stop
     run_command sonar disable
