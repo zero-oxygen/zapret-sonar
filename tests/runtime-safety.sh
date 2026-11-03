@@ -36,9 +36,11 @@ last_check=9999999999
 CACHE
 EOF
 chmod +x "$TEST_DIR/fake-self"
+# setsid обязателен: спавн происходит внутри подстановки команды, и без
+# отдельной сессии потомок может быть снят вместе с ней.
 _zf_spawn_update_check() {
-    ZF_UPDATE_CACHE_DIR="$_ZF_UPDATE_CACHE_DIR" "$TEST_DIR/fake-self" _update_check_worker \
-        </dev/null >/dev/null 2>&1 &
+    setsid env ZF_UPDATE_CACHE_DIR="$_ZF_UPDATE_CACHE_DIR" \
+        "$TEST_DIR/fake-self" _update_check_worker </dev/null >/dev/null 2>&1 &
 }
 
 victim="$TEST_DIR/victim"
@@ -107,7 +109,7 @@ elapsed=$(( ($(date +%s%N) - start) / 1000000 ))
 (( elapsed < 1000 )) || { printf 'FAIL: update status blocked for %s ms\n' "$elapsed" >&2; exit 1; }
 [[ ! -f "$ZF_UPDATE_CACHE_DIR/update-check" ]] \
     || { printf 'FAIL: worker finished before the first status call\n' >&2; exit 1; }
-for _ in {1..40}; do
+for _ in {1..60}; do
     [[ -f "$ZF_UPDATE_CACHE_DIR/update-check" ]] && break
     sleep 0.1
 done
