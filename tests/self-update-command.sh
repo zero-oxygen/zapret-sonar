@@ -8,12 +8,14 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 
 asset_dir="$TEST_DIR/assets"
 bash "$PROJECT_DIR/scripts/build-release.sh" "$asset_dir" >/dev/null
+release_version=$(sed -n 's/^version=//p' "$PROJECT_DIR/RELEASE")
 export ZF_LIBRARY_MODE=1
 export ZF_INSTALL_ROOT="$TEST_DIR/install"
 export ZF_ZAPRET_BASE="$TEST_DIR/zapret"
 export ZF_RUNTIME_DIR="$TEST_DIR/run"
 export ZF_UPDATE_CACHE_DIR="$TEST_DIR/cache"
-mkdir -p "$ZF_INSTALL_ROOT/releases/old" "$ZF_INSTALL_ROOT/lib" "$ZF_ZAPRET_BASE/nfq" "$ZF_RUNTIME_DIR"
+mkdir -p "$ZF_INSTALL_ROOT/releases/old" "$ZF_INSTALL_ROOT/lib" "$ZF_ZAPRET_BASE/nfq" "$ZF_RUNTIME_DIR" \
+    "$ZF_ZAPRET_BASE/init.d/sysv/custom.d"
 printf '#!/usr/bin/env bash\nprintf "zapret-sonar 1.2.2\\n"\n' > "$ZF_INSTALL_ROOT/releases/old/zapret-sonar"
 chmod +x "$ZF_INSTALL_ROOT/releases/old/zapret-sonar"
 ln -s releases/old "$ZF_INSTALL_ROOT/current"
@@ -37,15 +39,20 @@ curl() {
     while (( $# )); do
         if [[ "$1" == -o ]]; then out="$2"; shift 2; else shift; fi
     done
-    [[ "$out" == *SHA256SUMS ]] && src="$asset_dir/SHA256SUMS" || src="$asset_dir/zapret-sonar-v1.4.0.tar.gz"
+    [[ "$out" == *SHA256SUMS ]] && src="$asset_dir/SHA256SUMS" || src="$asset_dir/zapret-sonar-v$release_version.tar.gz"
     cp "$src" "$out"
 }
 
-cmd_self_update --force --version 1.4.0 >/dev/null
+cmd_self_update --force --version "$release_version" >/dev/null
+# Хук ставится из обновлённого кода и должен появиться сразу, не дожидаясь `use`.
+hook="$ZF_ZAPRET_BASE/init.d/sysv/custom.d/50-sonar-udp-conntrack"
+[[ -f "$hook" && ! -L "$hook" ]] || { printf 'FAIL: self-update did not write the UDP conntrack hook\n' >&2; exit 1; }
+[[ "$(stat -c %a "$hook")" == 644 ]]
+grep -q 'sonar-udp-conntrack' "$hook"
 new_target=$(readlink "$ZF_INSTALL_ROOT/current")
-[[ "$new_target" == releases/1.4.0-* ]]
+[[ "$new_target" == "releases/$release_version"-* ]]
 [[ "$(readlink "$ZF_INSTALL_ROOT/previous")" == releases/old ]]
-[[ "$(ZF_LIBRARY_MODE=0 "$ZF_INSTALL_ROOT/zapret-sonar" --version)" == 'zapret-sonar 1.4.0' ]]
-cmd_self_update --force --version 1.4.0 >/dev/null
+[[ "$(ZF_LIBRARY_MODE=0 "$ZF_INSTALL_ROOT/zapret-sonar" --version)" == "zapret-sonar $release_version" ]]
+cmd_self_update --force --version "$release_version" >/dev/null
 [[ "$(readlink "$ZF_INSTALL_ROOT/current")" == "$new_target" ]]
 printf 'PASS: self-update command downloads, verifies and activates a release\n'

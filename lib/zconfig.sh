@@ -127,6 +127,88 @@ zf_write_config() {
         rm -f "$tmp"
         return 1
     fi
+
+    # Хук пишется до рестарта сервиса. Без него первый же старт поднимает
+    # UDP-десинк без сохранённой conntrack-записи, и UDP/QUIC ломается до
+    # следующего применения стратегии. Ошибка записи не отменяет применение:
+    # конфиг уже валиден, а doctor и check явно покажут пробел.
+    zf_write_udp_conntrack_hook \
+        || printf 'zconfig: не удалось записать UDP conntrack hook, UDP может не работать\n' >&2
+    return 0
+}
+
+# --- UDP conntrack hook ------------------------------------------------------
+# В POSTNAT-режиме zapret помечает сгенерированные nfqws копии как notrack
+# (common/nft.sh:108). Для TCP это безвредно: десинк применяется после SYN,
+# когда conntrack-запись уже подтверждена. Для UDP записи не остаётся вовсе:
+# ответы не сопоставляются с записью и режутся политикой firewall по
+# умолчанию (UFW дропает такой трафик). Внешне это выглядит как «UDP заблокирован
+# провайдером», хотя без zapret тот же трафик работает.
+#
+# Хук возвращает tracking только сгенерированным UDP-копиям и только для
+# нефрагментированного IPv4. TCP, IPv6 и фрагменты сохраняют upstream-ное
+# поведение: для TCP notrack нужен для корректной работы badseq и datanoack,
+# фрагменты обрабатываются отдельными правилами. IPv6 вне охвата: конфиг его
+# отключает (DISABLE_IPV6=1).
+#
+# Хук ставится через штатный custom.d, который zapret вызывает после
+# построения цепочек, поэтому переживает смену стратегии и обновления.
+ZF_UDP_CONNTRACK_HOOK="50-sonar-udp-conntrack"
+# Читается в cmd_doctor (zapret-sonar) при проверке правила.
+# shellcheck disable=SC2034
+ZF_UDP_CONNTRACK_COMMENT="sonar-udp-conntrack"
+
+zf_udp_conntrack_hook_path() {
+    printf '%s/init.d/sysv/custom.d/%s\n' "$ZF_ZAPRET_BASE" "$ZF_UDP_CONNTRACK_HOOK"
+}
+
+# zf_write_udp_conntrack_hook — записать хук атомарно. Возвращает 0 и при
+# отсутствии изменений: файл перезаписывается только если содержимое другое.
+zf_write_udp_conntrack_hook() {
+    local dir file tmp
+    dir="$ZF_ZAPRET_BASE/init.d/sysv/custom.d"
+    file="$dir/$ZF_UDP_CONNTRACK_HOOK"
+
+    # Каталог custom.d есть в штатной раскладке zapret. Если его нет, это не
+    # ошибка применения конфига: doctor сообщит о пропуске явно.
+    [[ -d "$dir" && ! -L "$dir" ]] || return 1
+    [[ ! -L "$file" ]] || return 1
+
+    tmp=$(mktemp "$dir/.udp-conntrack.XXXXXX") || return 1
+    cat > "$tmp" <<'EOF'
+# Сгенерировано zapret-sonar. Правки будут перезаписаны.
+#
+# Возвращает tracking сгенерированным nfqws UDP-копиям в POSTNAT-режиме:
+# без этого ответы не сопоставляются с записью и режутся локальным firewall.
+# TCP и фрагменты не затрагиваются — там notrack нужен по другой причине.
+zapret_custom_firewall_nft()
+{
+    local table mark chain
+    table="${ZAPRET_NFT_TABLE:-zapret}"
+    mark="${DESYNC_MARK_POSTNAT:-0x20000000}"
+
+    chain=$(nft list chain inet "$table" predefrag_nfqws 2>/dev/null) || return 0
+    case "$chain" in *sonar-udp-conntrack*) return 0 ;; esac
+
+    nft insert rule inet "$table" predefrag_nfqws \
+        meta nfproto ipv4 meta l4proto udp \
+        meta mark and "$mark" != 0 \
+        ip frag-off and 0x3fff == 0 \
+        counter return comment '"sonar-udp-conntrack"' || {
+        echo "zapret-sonar: не удалось установить правило UDP conntrack" >&2
+        return 1
+    }
+}
+EOF
+
+    if [[ -f "$file" ]] && cmp -s "$tmp" "$file"; then
+        rm -f "$tmp"
+        return 0
+    fi
+
+    chmod 644 "$tmp" || { rm -f "$tmp"; return 1; }
+    chown root:root "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$file" || { rm -f "$tmp"; return 1; }
     return 0
 }
 

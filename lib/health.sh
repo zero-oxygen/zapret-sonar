@@ -319,6 +319,10 @@ zf_check_quic() {
     if _zf_http3_succeeded; then
         printf '  %sFAIL%s  %-42s HTTP/3 недоступен (контрольная цель работает)\n' \
             "$_ZF_C_BAD" "$_ZF_C_OFF" "$ZF_HEALTH_QUIC_TARGET"
+        # Тот же симптом даёт сломанный UDP-conntrack: пакет уходит, ответ
+        # приходит как INVALID и режется локальным firewall. Проверить это
+        # можно только с root, поэтому подсказка, а не отдельная проверка.
+        printf '         если UDP работает без zapret, проверьте локальный firewall/conntrack: sudo sonar doctor\n'
         _zf_health_write_result "$result_file" quic "$ZF_HEALTH_QUIC_TARGET" FAIL \
             target_http3_failed "$target_code" "" "" "$target_version" "$target_rc" PASS \
             "$ZF_HEALTH_QUIC_CONTROL"
